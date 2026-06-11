@@ -60,6 +60,30 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString(), uptime: process.uptime() });
 });
 
+// ── DIAGNÓSTICO: listar tabelas do banco ──────────────────────
+app.get('/api/debug/tables', async (_req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [tables] = await conn.execute('SHOW TABLES');
+    conn.release();
+    res.json({ tables });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DIAGNÓSTICO: ver colunas de uma tabela ────────────────────
+app.get('/api/debug/columns/:table', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [cols] = await conn.execute(`DESCRIBE \`${req.params.table}\``);
+    conn.release();
+    res.json({ table: req.params.table, columns: cols });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Helpers ───────────────────────────────────────────────────
 function buildUnitFilter(businessUnit) {
   if (!businessUnit || businessUnit === 'all') return ['ecommerce', 'distributor'];
