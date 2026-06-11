@@ -8,8 +8,7 @@ node_modules/
 *.log
 logs/
 
-# Pasta de exemplo (referência interna)
+# Pastas desnecessárias
+backend/
 exemplo/
-
-# IDE
 .vscode/
