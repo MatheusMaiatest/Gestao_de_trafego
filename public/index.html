@@ -452,27 +452,6 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
   </div>
 </div>
 
-<div class="overlay" id="ov-drill">
-  <div class="modal wide">
-    <button class="modal-close" onclick="closeOv('ov-drill')">✕</button>
-    <div class="modal-head"><h2 id="md-title">-</h2><div class="modal-sub" id="md-sub"></div></div>
-    <div class="modal-body">
-      <div style="display:grid;grid-template-columns:1fr 260px;gap:0">
-        <div style="border-right:1px solid var(--bdr);padding-right:14px">
-          <div id="md-map-wrap" style="height:400px;position:relative">
-            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--tm);font-size:.8rem" id="md-loading">Carregando...</div>
-            <svg id="md-svg" viewBox="0 0 500 450" style="width:100%;height:100%;display:none"></svg>
-          </div>
-        </div>
-        <div style="padding-left:14px;overflow-y:auto;max-height:420px;display:flex;flex-direction:column;gap:8px">
-          <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm)">Top Cidades</div>
-          <div id="md-cities"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
 // ══════════════════════════════════════════════════════════════
 // CONFIG & UTILS
@@ -820,30 +799,159 @@ function renderMapFat(states){
     .text(d=>getSigla(d));
 }
 
-// DRILL-DOWN MUNICIPAL
-async function openDrillModal(uf,stateName,mode,ufMap){
-  document.getElementById('md-title').textContent=`${stateName} — Municípios`;
-  document.getElementById('md-sub').textContent='Carregando...';
-  document.getElementById('md-svg').style.display='none';
-  document.getElementById('md-loading').style.display='flex';
-  document.getElementById('md-cities').innerHTML='';
-  openOv('ov-drill');
+// DRILL-DOWN MUNICIPAL — idêntico ao exemplo.html: substitui mapa no card, não abre modal
+let _drillCurrentUF=null;
 
-  const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
-  // Buscar cidades do estado
-  try {
-    const citData=await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=${dBU}&states=${uf}`);
-    const cities=citData.cities||[];
-    const maxV=Math.max(...cities.map(c=>mode==='faturamento'?c.totalRevenue:c.customerCount),1);
-    document.getElementById('md-sub').textContent=`${cities.length} cidades encontradas`;
+function normalizeCity(s){
+  return String(s).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
 
-    // Lista de cidades
-    document.getElementById('md-cities').innerHTML=cities.slice(0,20).map(c=>{
+function openDrillModal(uf, stateName, mode, ufMap){
+  _drillCurrentUF=uf;
+
+  // Qual SVG do Brasil corresponde a este modo
+  const svgBrId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
+  const brazilSvg = document.getElementById(svgBrId);
+  if(!brazilSvg) return;
+
+  const mapCard = brazilSvg.closest('.map-card');
+  if(!mapCard) return;
+
+  const drillId    = 'drill-'+mode;
+  const svgDrillId = 'svg-drill-'+mode;
+  const loadingId  = 'drillLoading-'+mode;
+  const titleId    = 'drillTitle-'+mode;
+  const subId      = 'drillSub-'+mode;
+
+  // Criar container de drill se não existir ainda
+  let drillContainer = document.getElementById(drillId);
+  if(!drillContainer){
+    drillContainer = document.createElement('div');
+    drillContainer.id = drillId;
+    drillContainer.style.display = 'none';
+    drillContainer.innerHTML =
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">'+
+        '<button class="drill-back" onclick="closeDrill(\''+mode+'\')">← Voltar ao Brasil</button>'+
+        '<div style="flex:1">'+
+          '<div style="font-size:.82rem;font-weight:700" id="'+titleId+'"></div>'+
+          '<div style="font-size:.7rem;color:var(--tm)" id="'+subId+'"></div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="map-loading" id="'+loadingId+'">⏳ Carregando mapa municipal...</div>'+
+      '<div class="map-svg-wrap" style="min-height:340px">'+
+        '<svg id="'+svgDrillId+'" viewBox="0 0 500 450" style="width:100%;height:100%;display:none"></svg>'+
+      '</div>'+
+      '<div class="legend-row" id="drill-leg-'+mode+'" style="margin-top:6px;justify-content:center"></div>'+
+      '<div class="drill-city-footer" id="drill-cities-'+mode+'" style="margin-top:10px"></div>';
+    mapCard.appendChild(drillContainer);
+  }
+
+  // Esconde o mapa Brasil, mostra o drill
+  brazilSvg.closest('.map-svg-wrap').style.display='none';
+  const mlEl = mapCard.querySelector('.map-loading[id^="ml-"]');
+  if(mlEl) mlEl.style.display='none';
+  drillContainer.style.display='block';
+
+  document.getElementById(titleId).textContent = stateName+' — Municípios';
+  document.getElementById(subId).textContent   = 'Carregando...';
+  document.getElementById(loadingId).style.display = 'flex';
+  document.getElementById(svgDrillId).style.display = 'none';
+
+  const ibgeCode = UF_IBGE[uf];
+  if(!ibgeCode){
+    document.getElementById(loadingId).textContent='Estado sem código IBGE.';
+    return;
+  }
+
+  if(DRILL_CACHE[uf]){
+    renderDrillMap(DRILL_CACHE[uf], uf, stateName, mode, ufMap);
+    return;
+  }
+
+  const url=`https://servicodados.ibge.gov.br/api/v3/malhas/estados/${ibgeCode}?formato=application/vnd.geo+json&qualidade=minima&divisao=municipio`;
+  fetch(url)
+    .then(r=>r.json())
+    .then(geo=>{ DRILL_CACHE[uf]=geo; renderDrillMap(geo, uf, stateName, mode, ufMap); })
+    .catch(()=>{ document.getElementById(loadingId).textContent='Não foi possível carregar o mapa municipal.'; });
+}
+
+async function renderDrillMap(geo, uf, stateName, mode, ufMap){
+  const dark = document.documentElement.getAttribute('data-theme')==='dark';
+  const svgDrillId = 'svg-drill-'+mode;
+  const loadingId  = 'drillLoading-'+mode;
+  const subId      = 'drillSub-'+mode;
+
+  // Buscar cidades via API
+  const s=document.getElementById('d-s').value, e=document.getElementById('d-e').value;
+  let cities=[];
+  try{
+    const res=await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=${dBU}&states=${uf}`);
+    cities=res.cities||[];
+  }catch(err){ console.warn('cities api error', err); }
+
+  // Mapear cidade normalizada → dados
+  const cityData={};
+  cities.forEach(c=>{
+    const key=normalizeCity(c.city);
+    cityData[key]={customers:c.customerCount, revenue:c.totalRevenue};
+  });
+
+  document.getElementById(subId).textContent=`${cities.length} cidade${cities.length!==1?'s':''} encontrada${cities.length!==1?'s':''}`;
+
+  // Escala de cores
+  const vals = cities.map(c=>mode==='faturamento'?c.totalRevenue:c.customerCount).filter(v=>v>0);
+  const minV = vals.length?Math.min(...vals):0;
+  const maxV = vals.length?Math.max(...vals):1;
+  const faixas = calcFaixas(vals, 5);
+  renderLegenda('drill-leg-'+mode, faixas, minV, maxV, dark,
+    mode==='faturamento'?(v=>'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0))):null);
+
+  const W=500, H=450;
+  const proj2=d3.geoMercator().fitSize([W-20,H-20],{type:'FeatureCollection',features:geo.features});
+  const t2=proj2.translate(); proj2.translate([t2[0]+10, t2[1]+10]);
+  const path2=d3.geoPath().projection(proj2);
+
+  const svg2=d3.select('#'+svgDrillId);
+  svg2.selectAll('*').remove();
+  svg2.attr('viewBox',`0 0 ${W} ${H}`).style('display','block');
+  document.getElementById(loadingId).style.display='none';
+
+  const g2=svg2.append('g');
+  g2.selectAll('path').data(geo.features).enter().append('path')
+    .attr('class',feat=>{
+      const key=normalizeCity(feat.properties.name||'');
+      return 'mun-path'+(cityData[key]?' has-data':'');
+    })
+    .attr('d',path2)
+    .attr('fill',feat=>{
+      const key=normalizeCity(feat.properties.name||'');
+      const v=cityData[key]?(mode==='faturamento'?cityData[key].revenue:cityData[key].customers):0;
+      return v?getHeatColor(v,minV,maxV,dark):(dark?'#161922':'#edf2f7');
+    })
+    .attr('stroke',dark?'#2a2d3e':'#cbd5e1').attr('stroke-width','0.4')
+    .attr('opacity',feat=>{ const key=normalizeCity(feat.properties.name||''); return cityData[key]?1:0.5; })
+    .on('mouseenter',(ev,feat)=>{
+      const nm=feat.properties.name||'';
+      const key=normalizeCity(nm);
+      const v=cityData[key];
+      showTip(ev, nm+(v?`: ${fmtN(v.customers)} clientes / ${fmt(v.revenue)}`:''));
+    })
+    .on('mousemove',moveTip).on('mouseleave',hideTip);
+
+  // Lista de cidades no rodapé
+  const sorted=[...cities].sort((a,b)=>(mode==='faturamento'?b.totalRevenue-a.totalRevenue:b.customerCount-a.customerCount));
+  const maxCity=sorted[0]??(mode==='faturamento'?sorted[0]?.totalRevenue:sorted[0]?.customerCount)||1;
+  const maxVal=mode==='faturamento'?Math.max(...sorted.map(c=>c.totalRevenue),1):Math.max(...sorted.map(c=>c.customerCount),1);
+
+  document.getElementById('drill-cities-'+mode).innerHTML =
+    `<div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm);margin-bottom:6px">📍 Cidades (${sorted.length})</div>`+
+    `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">`+
+    sorted.map(c=>{
       const v=mode==='faturamento'?c.totalRevenue:c.customerCount;
-      const pct=((v/maxV)*100).toFixed(1);
-      return `<div style="display:flex;flex-direction:column;gap:3px;padding:6px 8px;background:var(--bgc);border:1px solid var(--bdr);border-radius:var(--rs);margin-bottom:5px">
-        <div style="font-size:.78rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.city}</div>
-        <div style="display:flex;justify-content:space-between;font-size:.68rem">
+      const pct=((v/maxVal)*100).toFixed(1);
+      return `<div style="padding:6px 8px;background:var(--bgc);border:1px solid var(--bdr);border-radius:var(--rs)">
+        <div style="font-size:.75rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.city}</div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;margin:2px 0">
           <span style="color:var(--tm)">${fmtN(c.customerCount)} cli.</span>
           <span style="color:var(--ok)">${fmt(c.totalRevenue)}</span>
         </div>
@@ -851,61 +959,24 @@ async function openDrillModal(uf,stateName,mode,ufMap){
           <div style="height:100%;background:var(--ac);width:${pct}%;border-radius:2px;transition:width .4s"></div>
         </div>
       </div>`;
-    }).join('')||'<p style="color:var(--tm);font-size:.78rem">Nenhuma cidade encontrada</p>';
+    }).join('')+`</div>`;
+}
 
-    // Mapa municipal via IBGE
-    const ibgeCode=UF_IBGE[uf];
-    if(!ibgeCode){document.getElementById('md-loading').style.display='none';return;}
+function closeDrill(mode){
+  const svgBrId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
+  const brazilSvg = document.getElementById(svgBrId);
+  if(!brazilSvg) return;
+  const mapCard = brazilSvg.closest('.map-card');
+  if(!mapCard) return;
 
-    const cityMap={};
-    cities.forEach(c=>{
-      const n=c.city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-      cityMap[n]={customers:c.customerCount,revenue:c.totalRevenue};
-    });
+  // Esconde drill, mostra mapa Brasil
+  const drillContainer = document.getElementById('drill-'+mode);
+  if(drillContainer) drillContainer.style.display='none';
+  brazilSvg.closest('.map-svg-wrap').style.display='block';
 
-    let geoMun=DRILL_CACHE[uf];
-    if(!geoMun){
-      const url=`https://servicodados.ibge.gov.br/api/v3/malhas/estados/${ibgeCode}?formato=application/vnd.geo+json&qualidade=minima&divisao=municipio`;
-      const r=await fetch(url);
-      geoMun=await r.json();
-      DRILL_CACHE[uf]=geoMun;
-    }
-
-    const vals2=cities.map(c=>mode==='faturamento'?c.totalRevenue:c.customerCount).filter(v=>v>0);
-    const min2=vals2.length?Math.min(...vals2):0,max2=vals2.length?Math.max(...vals2):1;
-    const dark=document.documentElement.getAttribute('data-theme')==='dark';
-
-    const W2=500,H2=450;
-    const proj2=d3.geoMercator().fitSize([W2-20,H2-20],{type:'FeatureCollection',features:geoMun.features});
-    const t2=proj2.translate();proj2.translate([t2[0]+10,t2[1]+10]);
-    const path2=d3.geoPath().projection(proj2);
-    const svg2=d3.select('#md-svg');svg2.selectAll('*').remove();
-    svg2.attr('viewBox',`0 0 ${W2} ${H2}`).style('display','block');
-    document.getElementById('md-loading').style.display='none';
-
-    const g2=svg2.append('g');
-    g2.selectAll('path').data(geoMun.features).enter().append('path')
-      .attr('class',feat=>{
-        const n=(feat.properties.name||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-        return 'mun-path'+(cityMap[n]?' has-data':'');
-      })
-      .attr('d',path2)
-      .attr('fill',feat=>{
-        const n=(feat.properties.name||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-        const v=cityMap[n]?.(mode==='faturamento'?'revenue':'customers')||0;
-        return v?getHeatColor(v,min2,max2,dark):(dark?'#161922':'#edf2f7');
-      })
-      .on('mouseenter',(e,feat)=>{
-        const nm=feat.properties.name||'';
-        const n=nm.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-        const v=cityMap[n];
-        showTip(e,nm+(v?`: ${fmtN(v.customers)} clientes / ${fmt(v.revenue)}`:''));
-      })
-      .on('mousemove',moveTip).on('mouseleave',hideTip);
-
-  } catch(err){
-    document.getElementById('md-loading').textContent='Erro: '+err.message;
-  }
+  // Deseleciona estado
+  d3.select('#'+svgBrId).selectAll('.state-path').classed('selected',false);
+  _drillCurrentUF=null;
 }
 
 // ══════════════════════════════════════════════════════════════
