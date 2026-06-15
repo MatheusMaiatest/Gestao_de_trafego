@@ -104,7 +104,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const conn = await pool.getConnection();
 
     const union = unionSQL(bu,
-      `contato_id, contato_nome, total, data`,
+      `contato_id, total, data`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'`);
 
     const [[kpi]] = await conn.execute(`
@@ -115,7 +115,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       FROM (${union}) t
       WHERE contato_id IS NOT NULL`);
 
-    const unionAll = unionSQL('all', `contato_id, contato_nome, data`, '');
+    const unionAll = unionSQL('all', `contato_id, data`, '');
     const [[novos]] = await conn.execute(`
       SELECT COUNT(*) AS total FROM (
         SELECT contato_id FROM (${unionAll}) t
@@ -126,7 +126,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
 
     const [[inat]] = await conn.execute(`
       SELECT COUNT(DISTINCT contato_id) AS total
-      FROM (${unionSQL('all','contato_id, contato_nome','')}) t
+      FROM (${unionSQL('all','contato_id','')}) t
       WHERE contato_id IS NOT NULL
         AND contato_id NOT IN (
           SELECT DISTINCT contato_id
