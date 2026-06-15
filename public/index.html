@@ -909,3 +909,467 @@ async function openDrillModal(uf,stateName,mode,ufMap){
   }
 }
 </script>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CLIENTES — tabela com filtros por coluna
+const COLS=[
+  {k:'name',    l:'Nome',         sort:true, filt:true},
+  {k:'businessUnit', l:'Unidade', sort:false,filt:true},
+  {k:'city',    l:'Cidade/UF',    sort:true, filt:true},
+  {k:'cpf',     l:'CPF/CNPJ',     sort:false,filt:false},
+  {k:'firstPurchaseDate',l:'1ª Compra',sort:true,filt:false},
+  {k:'lastPurchaseDate', l:'Última Compra',sort:true,filt:false},
+  {k:'totalOrders',l:'Pedidos',   sort:true, filt:false},
+  {k:'totalSpent',l:'Total Gasto',sort:true, filt:false},
+  {k:'averageTicket',l:'Ticket Médio',sort:true,filt:false},
+  {k:'_days',   l:'Dias Sem Comprar',sort:true,filt:false},
+  {k:'_seg',    l:'Segmento',     sort:false,filt:true},
+];
+const PER=50;
+let activeFilter=null; // col key de filtro aberto
+
+function buildHeader(){
+  const tr=document.createElement('tr');
+  COLS.forEach(col=>{
+    const th=document.createElement('th');
+    th.className='sortable';
+    if(cSort.k===col.k) th.classList.add('th-sorted');
+    const hasFilt=colFilters[col.k]&&colFilters[col.k].size>0;
+    th.innerHTML=`<div class="th-inner">${col.l}${col.sort?`<span class="sort-btn">${cSort.k===col.k?(cSort.asc?'▲':'▼'):'↕'}</span>`:''}`+
+      (col.filt?`<button class="filt-icon${hasFilt?' active':''}" title="Filtrar" onclick="event.stopPropagation();toggleColFilter('${col.k}',this)">🔽</button>`:'')+
+      `</div>`;
+    if(col.sort) th.addEventListener('click',()=>sortC(col.k));
+    tr.appendChild(th);
+  });
+  document.getElementById('c-thead').innerHTML='';
+  document.getElementById('c-thead').appendChild(tr);
+}
+
+function toggleColFilter(key,btn){
+  // Fechar qualquer aberto
+  document.querySelectorAll('.col-filter').forEach(e=>e.remove());
+  if(activeFilter===key){activeFilter=null;return;}
+  activeFilter=key;
+
+  const vals=[...new Set(cData.map(c=>String(c[key]||'—')))].sort();
+  const selected=colFilters[key]||new Set(vals);
+
+  const div=document.createElement('div');
+  div.className='col-filter open';
+  div.style.cssText='position:fixed;z-index:9999';
+  const rect=btn.getBoundingClientRect();
+  div.style.left=Math.min(rect.left,window.innerWidth-240)+'px';
+  div.style.top=(rect.bottom+4)+'px';
+
+  div.innerHTML=`<input class="cf-search" placeholder="Buscar..." oninput="filterCFList(this,'${key}')"/>
+    <div class="cf-list" id="cf-list-${key}">${vals.map(v=>`
+      <label class="cf-item"><input type="checkbox" value="${v.replace(/"/g,'&quot;')}" ${selected.has(v)?'checked':''}> ${v}</label>
+    `).join('')}</div>
+    <div class="cf-actions">
+      <button class="cf-btn" onclick="cfAll('${key}',true)">Todos</button>
+      <button class="cf-btn" onclick="cfAll('${key}',false)">Nenhum</button>
+      <button class="cf-btn primary" onclick="applyColFilter('${key}')">Aplicar</button>
+    </div>`;
+
+  document.body.appendChild(div);
+  // Fechar ao clicar fora
+  setTimeout(()=>{
+    document.addEventListener('click',function h(e){
+      if(!div.contains(e.target)&&e.target!==btn){div.remove();activeFilter=null;document.removeEventListener('click',h);}
+    });
+  },0);
+}
+
+function filterCFList(inp,key){
+  const q=inp.value.toLowerCase();
+  document.querySelectorAll(`#cf-list-${key} .cf-item`).forEach(item=>{
+    item.style.display=item.textContent.toLowerCase().includes(q)?'':'none';
+  });
+}
+
+function cfAll(key,check){
+  document.querySelectorAll(`#cf-list-${key} input`).forEach(cb=>cb.checked=check);
+}
+
+function applyColFilter(key){
+  const checks=[...document.querySelectorAll(`#cf-list-${key} input[type=checkbox]`)];
+  colFilters[key]=new Set(checks.filter(c=>c.checked).map(c=>c.value));
+  document.querySelectorAll('.col-filter').forEach(e=>e.remove());
+  activeFilter=null;
+  cPage=1;
+  renderClienteTable();
+  buildHeader();
+}
+
+async function loadClientes(){
+  const s=document.getElementById('c-s').value,e=document.getElementById('c-e').value;
+  const seg=document.getElementById('c-seg').value;
+  const search=document.getElementById('c-search').value.trim();
+  if(!s||!e) return;
+  document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  colFilters={};
+  try {
+    let clients=[];
+    if(seg){
+      const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${cBU}`);
+      clients=(d.customers||[]).map(c=>({...c,_seg:seg}));
+    } else {
+      let q=`/clients?startDate=${s}&endDate=${e}&businessUnit=${cBU}&page=1&limit=1000`;
+      if(search) q+=`&search=${encodeURIComponent(search)}`;
+      const d=await api(q);
+      clients=d.clients||[];
+    }
+    // Calcular segmento e dias
+    const sorted=[...clients].sort((a,b)=>b.totalSpent-a.totalSpent);
+    const vipN=Math.ceil(sorted.length*0.1);
+    sorted.forEach((c,i)=>{
+      c._days=daysAgo(c.lastPurchaseDate||c.lastDate);
+      if(!c._seg){
+        if(i<vipN)            c._seg='vip';
+        else if((c.totalOrders||c.orderCount||0)>=3) c._seg='recorrente';
+        else if(c._days!==null&&c._days>90) c._seg='inativo';
+        else if(c._days!==null&&c._days>30) c._seg='em_risco';
+        else                  c._seg='novo';
+      }
+    });
+    cData=sorted;
+    cPage=1;
+    buildHeader();
+    renderClienteTable();
+    // KPIs
+    const tot=clients.length,sp=clients.reduce((s,c)=>s+parseFloat(c.totalSpent||0),0);
+    const ord=clients.reduce((s,c)=>s+parseInt(c.totalOrders||c.orderCount||0),0);
+    document.getElementById('c-kpis').style.display='grid';
+    document.getElementById('c-kpis').innerHTML=[
+      {l:'Clientes',v:fmtN(tot),c:''},
+      {l:'Faturamento',v:fmt(sp),c:'accent'},
+      {l:'Pedidos',v:fmtN(ord),c:''},
+      {l:'Ticket Médio',v:fmt(ord>0?sp/ord:0),c:'ok'},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+    document.getElementById('c-count').textContent=`${fmtN(tot)} clientes`;
+  } catch(err){
+    document.getElementById('c-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+function applyColFilters(data){
+  return data.filter(c=>{
+    return Object.entries(colFilters).every(([k,set])=>{
+      if(!set||set.size===0) return true;
+      const v=String(c[k]||'—');
+      return set.has(v);
+    });
+  });
+}
+
+function renderClienteTable(){
+  const filtered=applyColFilters(cData);
+  const start=(cPage-1)*PER,page=filtered.slice(start,start+PER);
+  if(!page.length){
+    document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="empty-state"><div class="icon">👥</div><p>Nenhum cliente encontrado</p></div></td></tr>';
+    document.getElementById('c-pag').innerHTML='';
+    return;
+  }
+  document.getElementById('c-tbody').innerHTML=page.map(c=>{
+    const bu=c.businessUnit||c.origem||'';
+    const rowCls=bu==='ecommerce'?'eco-row':bu==='distribuicao'||bu==='distributor'?'dist-row':bu==='both'?'both-row':'';
+    const cpfFmt=c.cpf?String(c.cpf).replace(/^(\d{2,3})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/,'$1.$2.$3-$4'):'—';
+    return `<tr class="${rowCls}">
+      <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
+      <td>${unitBadge(bu)}</td>
+      <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.7rem;color:var(--tm)">${cpfFmt}</td>
+      <td style="font-size:.72rem">${fmtD(c.firstPurchaseDate||c.firstDate)}</td>
+      <td style="font-size:.72rem">${fmtD(c.lastPurchaseDate||c.lastDate)}</td>
+      <td style="text-align:center;font-weight:700">${fmtN(c.totalOrders||c.orderCount||0)}</td>
+      <td style="color:var(--ok);font-weight:700">${fmt(c.totalSpent)}</td>
+      <td>${fmt(c.averageTicket||0)}</td>
+      <td>${daysBadge(c._days)}</td>
+      <td>${segBadge(c._seg)}</td>
+    </tr>`;
+  }).join('');
+  renderPag('c-pag',cPage,Math.ceil(filtered.length/PER),p=>{cPage=p;renderClienteTable();});
+}
+
+function sortC(key){
+  if(cSort.k===key) cSort.asc=!cSort.asc; else {cSort.k=key;cSort.asc=false;}
+  cData.sort((a,b)=>{
+    const va=a[key]??'',vb=b[key]??'';
+    const r=typeof va==='number'?va-vb:String(va).localeCompare(String(vb),'pt-BR');
+    return cSort.asc?r:-r;
+  });
+  cPage=1;buildHeader();renderClienteTable();
+}
+
+function renderPag(id,cur,total,cb){
+  const el=document.getElementById(id);if(total<=1){el.innerHTML='';return;}
+  const pgs=[];
+  if(cur>1) pgs.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur-1})">‹</button>`);
+  if(total<=7){for(let i=1;i<=total;i++) pgs.push(`<button class="pag-btn${i===cur?' active':''}" onclick="(${cb.toString()})(${i})">${i}</button>`);}
+  else {
+    pgs.push(`<button class="pag-btn${cur===1?' active':''}" onclick="(${cb.toString()})(1)">1</button>`);
+    if(cur>3) pgs.push('<span class="pag-info">…</span>');
+    for(let i=Math.max(2,cur-1);i<=Math.min(total-1,cur+1);i++) pgs.push(`<button class="pag-btn${i===cur?' active':''}" onclick="(${cb.toString()})(${i})">${i}</button>`);
+    if(cur<total-2) pgs.push('<span class="pag-info">…</span>');
+    pgs.push(`<button class="pag-btn${cur===total?' active':''}" onclick="(${cb.toString()})(${total})">${total}</button>`);
+  }
+  if(cur<total) pgs.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur+1})">›</button>`);
+  pgs.push(`<span class="pag-info">Pág ${cur} de ${total}</span>`);
+  el.innerHTML=pgs.join('');
+}
+
+// MODAL CLIENTE
+async function openClientModal(id){
+  if(!id||id==='undefined') return;
+  document.getElementById('mc-name').textContent='Carregando...';
+  document.getElementById('mc-sub').innerHTML='';
+  document.getElementById('mc-info').innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+  document.getElementById('mc-orders').innerHTML='';
+  openOv('ov-cliente');
+  try {
+    const c=await api(`/clients/${id}`);
+    const bu=c.businessUnit||c.origem||'';
+    document.getElementById('mc-name').textContent=c.name||'—';
+    document.getElementById('mc-sub').innerHTML=unitBadge(bu);
+    const cpfFmt=c.cpf?String(c.cpf).replace(/^(\d{2,3})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5').replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/,'$1.$2.$3-$4'):'—';
+    document.getElementById('mc-info').innerHTML=[
+      {l:'CPF/CNPJ',v:cpfFmt},{l:'Tipo',v:c.tipoPessoa||'—'},
+      {l:'Cidade',v:c.city||'—'},{l:'Estado',v:c.state||'—'},
+      {l:'Bairro',v:c.bairro||'—'},{l:'Endereço',v:c.endereco||'—'},
+      {l:'CEP',v:c.cep||'—'},{l:'Unidade',v:bu||'—'},
+      {l:'1ª Compra',v:fmtD(c.firstPurchaseDate)},{l:'Última Compra',v:fmtD(c.lastPurchaseDate)},
+      {l:'Total Pedidos',v:`<span class="big">${fmtN(c.totalOrders||0)}</span>`},
+      {l:'Total Gasto',v:`<span class="big">${fmt(c.totalSpent)}</span>`},
+      {l:'Ticket Médio',v:fmt(c.averageTicket||0)},
+      {l:'Dias Sem Comprar',v:daysBadge(daysAgo(c.lastPurchaseDate))},
+    ].map(x=>`<div class="ii"><label>${x.l}</label><span>${x.v}</span></div>`).join('');
+
+    const pedidos=c.pedidos||[];
+    if(!pedidos.length){
+      document.getElementById('mc-orders').innerHTML='<p style="color:var(--tm);font-size:.8rem">Nenhum pedido encontrado</p>';
+    } else {
+      document.getElementById('mc-orders').innerHTML=pedidos.map(p=>`
+        <div class="order-item" onclick="openPedidoModal('${p.id}','${p.origem||''}')">
+          <span class="order-num">Pedido ${p.numero||p.id}</span>
+          ${unitBadge(p.origem||'')}
+          <span class="order-date">${fmtD(p.data)}</span>
+          ${sitBadge(p.situacao)}
+          <span class="order-val">${fmt(p.total)}</span>
+          <span style="color:var(--tm);font-size:.7rem">▶</span>
+        </div>`).join('');
+    }
+  } catch(err){
+    document.getElementById('mc-info').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;
+  }
+}
+
+// MODAL PEDIDO
+async function openPedidoModal(id,origem){
+  if(!id||id==='undefined') return;
+  document.getElementById('mp-title').textContent='Carregando pedido...';
+  document.getElementById('mp-sub').textContent='';
+  document.getElementById('mp-body').innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+  openOv('ov-pedido');
+  try {
+    const p=await api(`/orders/${id}`);
+    document.getElementById('mp-title').textContent=`Pedido ${p.numero||id}`;
+    document.getElementById('mp-sub').innerHTML=`${unitBadge(p.origem)} ${sitBadge(p.situacao)}`;
+    document.getElementById('mp-body').innerHTML=`
+      <div class="info-grid">
+        <div class="ii"><label>Data</label><span>${fmtD(p.data)}</span></div>
+        <div class="ii"><label>Cliente</label><span>${p.cliente||'—'}</span></div>
+        <div class="ii"><label>CPF/CNPJ</label><span>${p.cpf||'—'}</span></div>
+        <div class="ii"><label>Cidade</label><span>${p.cidade||'—'}/${p.estado||'—'}</span></div>
+        <div class="ii"><label>Total</label><span class="big">${fmt(p.total)}</span></div>
+        <div class="ii"><label>Produtos</label><span>${fmt(p.totalProdutos)}</span></div>
+        <div class="ii"><label>Desconto</label><span>${fmt(p.desconto)}</span></div>
+        <div class="ii"><label>Frete</label><span>${fmt(p.frete)}</span></div>
+        <div class="ii"><label>Transportadora</label><span>${p.transportadora||'—'}</span></div>
+      </div>
+      <div class="sec-title">📦 Itens do Pedido</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+        <thead><tr style="border-bottom:2px solid var(--bdr)">
+          <th style="padding:6px 8px;text-align:left;color:var(--tm)">SKU</th>
+          <th style="padding:6px 8px;text-align:left;color:var(--tm)">Produto</th>
+          <th style="padding:6px 8px;text-align:right;color:var(--tm)">Qtd</th>
+          <th style="padding:6px 8px;text-align:right;color:var(--tm)">Unit.</th>
+          <th style="padding:6px 8px;text-align:right;color:var(--tm)">Desc.</th>
+          <th style="padding:6px 8px;text-align:right;color:var(--tm)">Total</th>
+        </tr></thead>
+        <tbody>${(p.itens||[]).map(i=>`
+          <tr style="border-bottom:1px solid var(--bdr)">
+            <td style="padding:6px 8px"><span style="background:var(--ac);color:#fff;padding:1px 6px;border-radius:3px;font-size:.7rem;font-weight:700">${i.sku||'—'}</span></td>
+            <td style="padding:6px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i.descricao||i.sku||'—'}</td>
+            <td style="padding:6px 8px;text-align:right;font-weight:700">${fmtN(i.quantidade)}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--ts)">${fmt(i.precoUnitario)}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--warn)">${i.desconto>0?fmt(i.desconto):'—'}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--ok);font-weight:700">${fmt(i.total)}</td>
+          </tr>`).join('')||'<tr><td colspan="6" style="padding:12px;color:var(--tm);text-align:center">Itens não disponíveis</td></tr>'}
+        </tbody>
+      </table>`;
+  } catch(err){
+    document.getElementById('mp-body').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// RELATÓRIOS
+async function loadRKPIs(){
+  const s=document.getElementById('r-s').value,e=document.getElementById('r-e').value,bu=document.getElementById('r-bu').value;
+  if(!s||!e) return;
+  try{
+    const kpi=await api(`/dashboard/kpis?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+    document.getElementById('r-kpis').style.display='grid';
+    document.getElementById('r-kpis').innerHTML=[
+      {l:'Faturamento',v:fmt(kpi.totalRevenue),c:'accent'},
+      {l:'Pedidos',v:fmtN(kpi.totalOrders),c:''},
+      {l:'Clientes',v:fmtN(kpi.activeClients),c:'ok'},
+      {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+  }catch(e){}
+}
+
+async function loadCities(){
+  const uf=document.getElementById('r-uf').value;
+  const ce=document.getElementById('r-city');
+  ce.disabled=!uf;ce.innerHTML='<option value="">Todas</option>';
+  if(!uf) return;
+  const s=document.getElementById('r-s').value,e=document.getElementById('r-e').value;
+  if(!s||!e) return;
+  try{
+    const d=await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=all&states=${uf}`);
+    ce.innerHTML='<option value="">Todas</option>'+(d.cities||[]).map(c=>`<option value="${c.city}">${c.city}</option>`).join('');
+  }catch(e){}
+}
+
+async function previewRpt(type){
+  const s=document.getElementById('r-s').value,e=document.getElementById('r-e').value;
+  const bu=document.getElementById('r-bu').value,seg=document.getElementById('r-seg').value;
+  const uf=document.getElementById('r-uf').value,city=document.getElementById('r-city').value;
+  const ticket=document.getElementById('r-ticket').value;
+  if(!s||!e){alert('Selecione o período');return;}
+  const area=document.getElementById('preview-area');
+  area.style.display='block';area.innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+  area.scrollIntoView({behavior:'smooth'});
+  try{
+    let q=`/clients?startDate=${s}&endDate=${e}&businessUnit=${bu}&page=1&limit=1000`;
+    let clients=(await api(q)).clients||[];
+    if(seg){const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);const ids=new Set((d.customers||[]).map(c=>c.id||c.contato_id));clients=clients.length?clients.filter(c=>ids.has(c.id||c.contato_id)):d.customers||[];}
+    if(uf) clients=clients.filter(c=>(c.state||'').toUpperCase()===uf);
+    if(city) clients=clients.filter(c=>(c.city||'').toLowerCase()===city.toLowerCase());
+    if(ticket){const [mn,mx]=ticket==='1000+'?[1000,Infinity]:ticket.split('-').map(Number);clients=clients.filter(c=>{const t=c.averageTicket||0;return t>=mn&&(mx===Infinity||t<=mx);});}
+    const {headers,rows,filename}=buildRpt(type,clients,s,e);
+    window._rptData={headers,rows,filename};
+    area.innerHTML=`<div class="preview-wrap">
+      <div class="preview-hdr">
+        <div><div class="preview-title">📋 ${type.toUpperCase()} — Pré-visualização</div><div class="preview-count">${fmtN(rows.length)} registros</div></div>
+        <button class="btn-dl" onclick="dlRpt()">⬇️ Confirmar e Baixar</button>
+      </div>
+      <div class="preview-tbl-wrap">
+        <table class="preview-tbl">
+          <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+          <tbody>${rows.slice(0,50).map(r=>`<tr>${r.map(v=>`<td>${v??''}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${rows.length>50?`<p style="color:var(--tm);font-size:.7rem;text-align:center;padding:6px">Mostrando 50 de ${fmtN(rows.length)}</p>`:''}
+    </div>`;
+  }catch(err){area.innerHTML=`<p style="color:var(--err);padding:14px">❌ ${err.message}</p>`;}
+}
+
+function buildRpt(type,clients,s,e){
+  const ph=p=>{if(!p)return'';const n=String(p).replace(/\D/g,'');return n.startsWith('55')?`+${n}`:`+55${n}`;};
+  const nm=n=>{const pts=(n||'').trim().split(' ');return{fn:pts[0]||'',ln:pts.slice(1).join(' ')||''};};
+  let headers=[],rows=[],filename='relatorio';
+  if(type==='meta'){headers=['email','phone','fn','ln'];rows=clients.map(c=>{const x=nm(c.name);return[c.cpf||'',ph(c.cpf),x.fn,x.ln];});filename='meta_ads';}
+  else if(type==='google'){headers=['Email','First Name','Last Name','Phone'];rows=clients.map(c=>{const x=nm(c.name);return['',x.fn,x.ln,ph(c.cpf)];});filename='google_ads';}
+  else if(type==='tiktok'){headers=['email','phone_number'];rows=clients.map(c=>[c.cpf||'',ph(c.cpf)]);filename='tiktok_ads';}
+  else if(type==='linkedin'){headers=['email','firstName','lastName'];rows=clients.map(c=>{const x=nm(c.name);return['',x.fn,x.ln];});filename='linkedin_ads';}
+  else if(type==='pinterest'||type==='twitter'){headers=['email'];rows=clients.map(c=>[c.cpf||'']);filename=type+'_ads';}
+  else if(type==='kwai'){headers=['phone'];rows=clients.map(c=>[ph(c.cpf)]);filename='kwai';}
+  else if(type==='completo'){headers=['Nome','CPF','Cidade','Estado','Unidade','1ª Compra','Última Compra','Pedidos','Total Gasto','Ticket Médio'];rows=clients.map(c=>[c.name,c.cpf,c.city,c.state,c.businessUnit,fmtD(c.firstPurchaseDate),fmtD(c.lastPurchaseDate),c.totalOrders,c.totalSpent,c.averageTicket]);filename='clientes_completo';}
+  else if(type==='top'){headers=['Rank','Nome','Cidade','Estado','Pedidos','Total Gasto','Ticket Médio'];rows=clients.map((c,i)=>[i+1,c.name,c.city,c.state,c.totalOrders,c.totalSpent,c.averageTicket]);filename='top_clientes';}
+  else if(type==='inativos'){const in2=clients.filter(c=>daysAgo(c.lastPurchaseDate)>90);headers=['Nome','Cidade','Estado','Última Compra','Dias Sem Comprar','Total Gasto'];rows=in2.map(c=>[c.name,c.city,c.state,fmtD(c.lastPurchaseDate),daysAgo(c.lastPurchaseDate),c.totalSpent]);filename='inativos';}
+  else if(type==='rfm'){headers=['Nome','Cidade','Estado','Pedidos','Total Gasto','Ticket Médio','Dias','Segmento'];const srt=[...clients].sort((a,b)=>b.totalSpent-a.totalSpent);const vN=Math.ceil(srt.length*0.1);rows=srt.map((c,i)=>{const d=daysAgo(c.lastPurchaseDate);const sg=i<vN?'VIP':(c.totalOrders>=3?'Recorrente':d>90?'Inativo':d>30?'Em Risco':'Novo');return[c.name,c.city,c.state,c.totalOrders,c.totalSpent,c.averageTicket,d,sg];});filename='rfm';}
+  else if(type==='produtos'){headers=['Produto'];rows=[['Ver endpoint /api/products/top-selling']];filename='produtos';}
+  else if(type==='geo'){headers=['Estado','Clientes','Receita'];rows=clients.map(c=>[c.state,c.totalOrders,c.totalSpent]);filename='geo';}
+  else{headers=['Dado'];rows=[['Sem dados']];filename='relatorio';}
+  return{headers,rows,filename:`${filename}_${s}_${e}.csv`};
+}
+
+function dlRpt(){
+  const {headers,rows,filename}=window._rptData||{};if(!headers)return;
+  const bom='\uFEFF';
+  const csv=bom+[headers,...rows].map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=filename;a.click();
+}
+
+// ══════════════════════════════════════════════════════════════
+// DISPARO
+async function loadDisparo(){
+  const s=document.getElementById('dm-s').value,e=document.getElementById('dm-e').value;
+  const seg=document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo';
+  const bu=document.getElementById('dm-bu').value;
+  if(!s||!e){alert('Selecione o período');return;}
+  document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  try{
+    const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+    dmData=d.customers||[];dmPage=1;
+    document.getElementById('dm-cnt').textContent=`${fmtN(dmData.length)} clientes`;
+    renderDisparoTable(seg);
+    const tot=dmData.length,sp=dmData.reduce((s,c)=>s+parseFloat(c.totalSpent||0),0);
+    document.getElementById('dm-kpis').style.display='grid';
+    document.getElementById('dm-kpis').innerHTML=[
+      {l:'Clientes',v:fmtN(tot),c:''},
+      {l:'Pot. Faturamento',v:fmt(sp),c:'accent'},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+  }catch(err){
+    document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="10" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+function renderDisparoTable(seg){
+  const oppMap={inativo:{l:'Reativar',c:'opp-reativar'},em_risco:{l:'Em Risco',c:'opp-risco'},vip:{l:'Manter VIP',c:'opp-vip'},recorrente:{l:'Fidelizar',c:'opp-fid'},novo:{l:'Engajar',c:'opp-fid'}};
+  const opp=oppMap[seg]||{l:seg,c:'opp-fid'};
+  const start=(dmPage-1)*PER,page=dmData.slice(start,start+PER);
+  if(!page.length){document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="empty-state"><div class="icon">📱</div><p>Nenhum cliente neste segmento</p></div></td></tr>';document.getElementById('dm-pag').innerHTML='';return;}
+  document.getElementById('dm-tbody').innerHTML=page.map(c=>{
+    const bu=c.businessUnit||c.origem||'';
+    const d=c.daysSince??daysAgo(c.lastDate||c.lastPurchaseDate);
+    const waNum=(c.cpf||'').replace(/\D/g,'');
+    return `<tr>
+      <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
+      <td>${unitBadge(bu)}</td>
+      <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.72rem">${fmtD(c.lastDate||c.lastPurchaseDate)}</td>
+      <td>${daysBadge(d)}</td>
+      <td style="text-align:center">${fmtN(c.orderCount||c.totalOrders||0)}</td>
+      <td style="color:var(--ok);font-weight:700">${fmt(c.totalSpent)}</td>
+      <td>${fmt(c.averageTicket||0)}</td>
+      <td><span class="${opp.c}">${opp.l}</span></td>
+      <td>${waNum?`<a class="btn-wa" href="https://wa.me/55${waNum}" target="_blank">📱 WhatsApp</a>`:'<span style="color:var(--tm);font-size:.7rem">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  renderPag('dm-pag',dmPage,Math.ceil(dmData.length/PER),p=>{dmPage=p;renderDisparoTable(document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo');});
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODAL UTILS
+function openOv(id){document.getElementById(id).classList.add('open');document.body.style.overflow='hidden';}
+function closeOv(id){document.getElementById(id).classList.remove('open');document.body.style.overflow='';}
+document.querySelectorAll('.overlay').forEach(o=>{
+  o.addEventListener('click',e=>{if(e.target===o)closeOv(o.id);});
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.overlay.open').forEach(o=>closeOv(o.id));});
+document.getElementById('c-search').addEventListener('input',debounce(loadClientes,400));
+
+// ══════════════════════════════════════════════════════════════
+// INIT
+initDates();
+// Carregar GeoData e depois Dashboard
+loadGeoData().then(()=>loadDash());
+</script>
+</body>
+</html>
