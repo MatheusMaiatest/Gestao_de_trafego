@@ -681,15 +681,6 @@ async function openChartModal(type){
   } catch(err){document.getElementById('mch-table').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;}
 }
 
-// ══════════════════════════════════════════════════════════════
-// MAPAS D3 — igual ao exemplo.html
-const UF_IBGE={AC:'12',AL:'27',AM:'13',AP:'16',BA:'29',CE:'23',DF:'53',ES:'32',GO:'52',MA:'21',MG:'31',MS:'50',MT:'51',PA:'15',PB:'25',PE:'26',PI:'22',PR:'41',RJ:'33',RN:'24',RO:'11',RR:'14',RS:'43',SC:'42',SE:'28',SP:'35',TO:'17'};
-let _tip=null;
-function getTip(){if(!_tip){_tip=document.getElementById('map-tooltip');}return _tip;}
-function showTip(e,txt){const t=getTip();t.textContent=txt;t.style.opacity='1';t.style.left=(e.clientX+12)+'px';t.style.top=(e.clientY-32)+'px';}
-function moveTip(e){const t=getTip();t.style.left=(e.clientX+12)+'px';t.style.top=(e.clientY-32)+'px';}
-function hideTip(){getTip().style.opacity='0';}
-
 // ── MAPAS D3 — idêntico ao exemplo.html ──────────────────────
 var MAP_GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
 var UF_IBGE_CODES = {AC:'12',AL:'27',AM:'13',AP:'16',BA:'29',CE:'23',DF:'53',ES:'32',GO:'52',MA:'21',MG:'31',MS:'50',MT:'51',PA:'15',PB:'25',PE:'26',PI:'22',PR:'41',RJ:'33',RN:'24',RO:'11',RR:'14',RS:'43',SC:'42',SE:'28',SP:'35',TO:'17'};
