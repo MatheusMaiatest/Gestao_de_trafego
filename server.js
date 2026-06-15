@@ -130,7 +130,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
       WHERE contato_id IS NOT NULL
         AND contato_id NOT IN (
           SELECT DISTINCT contato_id
-          FROM (${unionSQL('all','contato_id, contato_nome',`WHERE data >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`)}) a
+          FROM (${unionSQL('all','contato_id',`WHERE data >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`)}) a
           WHERE contato_id IS NOT NULL
         )`);
 
