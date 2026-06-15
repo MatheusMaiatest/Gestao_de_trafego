@@ -650,3 +650,790 @@ tbody tr.both-row .unit-badge{background:rgba(76,175,80,.15);color:var(--both);b
     </div>
   </div>
 </div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG & UTILS
+// ══════════════════════════════════════════════════════════════
+const API = location.hostname==='localhost'||location.hostname==='127.0.0.1'
+  ? 'http://localhost:3001/api' : '/api';
+
+const CACHE = {};
+const CACHE_TTL = 120000; // 2 min
+
+async function api(url, opts) {
+  const key = url;
+  const now = Date.now();
+  if (CACHE[key] && now - CACHE[key].t < CACHE_TTL) return CACHE[key].d;
+  try {
+    const r = await fetch(API + url, opts);
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    CACHE[key] = {d, t: now};
+    return d;
+  } catch(e) {
+    console.error(url, e);
+    throw e;
+  }
+}
+
+function invalidateCache(prefix) {
+  Object.keys(CACHE).filter(k=>k.startsWith(prefix)).forEach(k=>delete CACHE[k]);
+}
+
+const fmt  = n => 'R$ ' + Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtN = n => Number(n||0).toLocaleString('pt-BR');
+const fmtD = d => d ? new Date(d+'T12:00:00').toLocaleDateString('pt-BR') : '—';
+const fmtPct = n => Number(n||0).toFixed(1)+'%';
+
+function debounce(fn, ms) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(()=>fn(...a), ms); };
+}
+
+function days(d) {
+  if (!d) return null;
+  return Math.floor((Date.now() - new Date(d+'T12:00:00').getTime()) / 86400000);
+}
+
+function daysBadge(n) {
+  if (n===null||n===undefined) return '—';
+  const cls = n>90?'days-err':n>30?'days-warn':'days-ok';
+  return `<span class="days-badge ${cls}">${fmtN(n)}d</span>`;
+}
+
+function unitBadge(bu, both=false) {
+  if (both) return `<span class="unit-badge both">🔀 Ambos</span>`;
+  if (bu==='ecommerce') return `<span class="unit-badge eco">🔵 E-com</span>`;
+  if (bu==='distribuicao'||bu==='distributor'||bu==='distribuidor') return `<span class="unit-badge dist">🟣 Dist</span>`;
+  return `<span class="unit-badge">${bu}</span>`;
+}
+
+function segBadge(seg) {
+  const map = {vip:'seg-vip',recorrente:'seg-recorrente',novo:'seg-novo',inativo:'seg-inativo',em_risco:'seg-risco'};
+  const lbl = {vip:'⭐ VIP',recorrente:'🔄 Recorrente',novo:'✨ Novo',inativo:'😴 Inativo',em_risco:'⚠️ Risco'};
+  if (!seg) return '—';
+  return `<span class="seg-badge ${map[seg]||''}">${lbl[seg]||seg}</span>`;
+}
+
+function rfmBadge(seg) {
+  const lbl={champions:'🏆 Champions',loyal:'💚 Loyal',potential_loyal:'🌱 Pot. Loyal',promising:'⭐ Promising',at_risk:'⚠️ At Risk',hibernating:'💤 Hibernating',lost:'❌ Lost'};
+  return `<span class="rfm-chip rfm-${seg}">${lbl[seg]||seg}</span>`;
+}
+
+// ── STATE ──
+let dBU='all', cBU='all';
+let cPage=1, cData=[], cSort={key:'totalSpent',asc:false};
+let dmData=[], dmPage=1;
+let segCache={};
+let chartInstances={};
+
+// ── THEME ──
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme')==='dark';
+  html.setAttribute('data-theme', isDark?'light':'dark');
+  document.querySelector('.theme-btn').textContent = isDark?'☀️':'🌙';
+  // Re-render charts
+  Object.values(chartInstances).forEach(c=>c&&c.destroy&&c.destroy());
+  chartInstances={};
+  if(document.getElementById('tab-dashboard').classList.contains('active')) loadDashboard();
+}
+
+// ── TABS ──
+function showTab(name) {
+  document.querySelectorAll('.section,.section-with-sidebar').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  const el = document.getElementById('tab-'+name);
+  if(el) el.classList.add('active');
+  event.target.classList.add('active');
+  if(name==='clientes' && !cData.length) loadClientes();
+  if(name==='relatorios') { syncReportDates(); loadReportKPIs(); }
+  if(name==='disparo') syncDisparoDates();
+}
+
+// ── BUSINESS UNIT ──
+function setBU(prefix, btn) {
+  const bu = btn.dataset.bu;
+  btn.closest('.btn-group').querySelectorAll('.ubtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(prefix==='d') { dBU=bu; invalidateCache('/dashboard'); }
+  if(prefix==='c') { cBU=bu; invalidateCache('/clients'); }
+}
+
+// ── DEFAULT DATES ──
+function initDates() {
+  const now = new Date();
+  const end = now.toISOString().slice(0,10);
+  const start = new Date(now - 30*86400000).toISOString().slice(0,10);
+  ['d-start','d-end','c-start','c-end','r-start','r-end','dm-start','dm-end'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.value = id.endsWith('start') ? start : end;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════
+async function loadDashboard() {
+  const s = document.getElementById('d-start').value;
+  const e = document.getElementById('d-end').value;
+  if(!s||!e) return;
+  const q = `?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
+
+  renderKPISkeleton('d-kpis');
+
+  try {
+    const [kpi, seg, rfm, prods, geo] = await Promise.all([
+      api('/dashboard/kpis'+q),
+      api('/segments'+q),
+      api('/rfm/distribution'+q),
+      api('/products/top-selling?orderBy=quantity&limit=10&startDate='+s+'&endDate='+e+'&businessUnit='+dBU),
+      api('/geolocation/states'+q)
+    ]);
+
+    renderDashKPIs(kpi, seg);
+    renderRFMChart(rfm.distribution||[]);
+    renderSegChart(seg.segments||[]);
+    renderProdChart(prods.products||[]);
+    renderGeoChart(geo.states||[]);
+    renderMap(geo.states||[]);
+  } catch(err) {
+    document.getElementById('d-kpis').innerHTML = `<div style="grid-column:1/-1;color:var(--err);padding:16px">❌ Erro ao carregar dados: ${err.message}</div>`;
+  }
+}
+
+function renderKPISkeleton(id) {
+  const el = document.getElementById(id);
+  const types=['accent','','ok','err','eco','','','warn'];
+  el.innerHTML = types.map(t=>`<div class="kpi-card ${t}"><div class="kpi-label"><div class="skel-lbl skeleton"></div></div><div class="skel-val skeleton"></div></div>`).join('');
+}
+
+function renderDashKPIs(kpi, seg) {
+  const emRisco = (seg.segments||[]).find(s=>s.segment==='em_risco' || s.segment==='inativo');
+  const kpis = [
+    {label:'Faturamento Total', value:fmt(kpi.totalRevenue), cls:'accent'},
+    {label:'Total de Pedidos',   value:fmtN(kpi.totalOrders), cls:''},
+    {label:'Clientes Ativos',    value:fmtN(kpi.activeClients), cls:'ok'},
+    {label:'Clientes Inativos',  value:fmtN(kpi.inactiveClients), cls:'err'},
+    {label:'Novos Clientes',     value:fmtN(kpi.newClients), cls:'eco'},
+    {label:'Ticket Médio',       value:fmt(kpi.averageTicket), cls:''},
+    {label:'Freq. de Compra',    value:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x', cls:''},
+    {label:'Clientes em Risco',  value:fmtN(emRisco?.customerCount||0), cls:'warn'},
+  ];
+  document.getElementById('d-kpis').innerHTML = kpis.map(k=>
+    `<div class="kpi-card ${k.cls}"><div class="kpi-label">${k.label}</div><div class="kpi-value">${k.value}</div></div>`
+  ).join('');
+}
+
+// ── CHARTS ──
+function mkChart(id, type, labels, datasets, opts={}) {
+  if(chartInstances[id]) chartInstances[id].destroy();
+  const ctx = document.getElementById(id);
+  if(!ctx) return;
+  const isDark = document.documentElement.getAttribute('data-theme')==='dark';
+  const gridColor = isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.06)';
+  const tickColor = isDark ? '#5c6270' : '#9098b8';
+  chartInstances[id] = new Chart(ctx, {
+    type, data:{labels, datasets},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:600},
+      plugins:{legend:{labels:{color:tickColor,font:{size:11}}}, tooltip:{callbacks:{label:opts.tooltipFn||undefined}}},
+      scales: type==='doughnut'||type==='pie' ? {} : {
+        x:{ticks:{color:tickColor,font:{size:10}},grid:{color:gridColor}},
+        y:{ticks:{color:tickColor,font:{size:10}},grid:{color:gridColor},...(opts.yAxis||{})}
+      },
+      ...opts.chartOpts
+    }
+  });
+  return chartInstances[id];
+}
+
+function renderRFMChart(dist) {
+  const colors = {champions:'#ffc107',loyal:'#4caf50',potential_loyal:'#7986cb',promising:'#42a5f5',at_risk:'#ff9800',hibernating:'#9e9e9e',lost:'#f44336'};
+  const lbl = dist.map(d=>d.segment), vals = dist.map(d=>d.customerCount);
+  mkChart('chart-rfm','doughnut',lbl,[{data:vals,backgroundColor:lbl.map(l=>colors[l]||'#5c6bc0'),borderWidth:2,borderColor:'var(--bgc)'}],
+    {tooltipFn: ctx => ` ${ctx.parsed} clientes (${dist[ctx.dataIndex]?.percentage||0}%)`});
+}
+
+function renderSegChart(segs) {
+  const colors = {vip:'#ffc107',recorrente:'#5c6bc0',novo:'#4caf50',inativo:'#f44336',em_risco:'#ff9800'};
+  const lbl={vip:'VIP',recorrente:'Recorrente',novo:'Novo',inativo:'Inativo',em_risco:'Em Risco'};
+  mkChart('chart-seg','bar',segs.map(s=>lbl[s.segment]||s.segment),[{
+    data:segs.map(s=>s.customerCount),
+    backgroundColor:segs.map(s=>colors[s.segment]||'#5c6bc0'),
+    borderRadius:6
+  }],{tooltipFn: ctx=>`${fmtN(ctx.parsed.y)} clientes`});
+}
+
+function renderProdChart(prods) {
+  mkChart('chart-produtos','bar',prods.map(p=>p.code||p.name),[{
+    data:prods.map(p=>p.totalQty||p.totalQuantitySold||0),
+    backgroundColor:'rgba(92,107,192,.7)',
+    borderRadius:4
+  }],{
+    tooltipFn: ctx=>`${fmtN(ctx.parsed.y)} unidades`,
+    chartOpts:{indexAxis:'y'}
+  });
+}
+
+function renderGeoChart(states) {
+  const top10 = states.slice(0,10);
+  mkChart('chart-estados','bar',top10.map(s=>s.location),[{
+    data:top10.map(s=>s.totalRevenue||s.revenue||0),
+    backgroundColor:'rgba(66,165,245,.7)',
+    borderRadius:4
+  }],{
+    tooltipFn: ctx=>`${fmt(ctx.parsed.y)}`,
+    chartOpts:{indexAxis:'y'}
+  });
+}
+
+// ── MAPA ──
+function renderMap(states) {
+  if(!states.length) return;
+  const maxC = Math.max(...states.map(s=>s.customerCount||0));
+  const stateMap = {};
+  states.forEach(s=>stateMap[s.location]=s);
+
+  document.querySelectorAll('.state-path').forEach(path=>{
+    const uf = path.dataset.uf;
+    const data = stateMap[uf];
+    if(data) {
+      const intensity = data.customerCount / maxC;
+      const r = Math.round(92 + intensity*33), g = Math.round(107+intensity*26), b = Math.round(192);
+      path.style.fill = `rgba(${r},${g},${b},${0.2+intensity*0.7})`;
+    } else {
+      path.style.fill = 'var(--bdr)';
+    }
+    path.onmouseenter = (e) => showMapTooltip(e, uf, data);
+    path.onmouseleave = () => { document.getElementById('map-tooltip').style.opacity=0; };
+    path.onclick = () => drillState(uf, stateMap);
+  });
+}
+
+function showMapTooltip(e, uf, data) {
+  const t = document.getElementById('map-tooltip');
+  t.style.opacity=1;
+  t.style.left = (e.clientX+12)+'px';
+  t.style.top  = (e.clientY-30)+'px';
+  t.innerHTML = data
+    ? `<strong>${uf}</strong><br>${fmtN(data.customerCount)} clientes<br>${fmt(data.totalRevenue)}`
+    : `<strong>${uf}</strong><br>Sem dados`;
+}
+
+async function drillState(uf, stateMap) {
+  const s = document.getElementById('d-start').value;
+  const e = document.getElementById('d-end').value;
+  document.getElementById('map-cities').style.display='block';
+  document.getElementById('map-city-title').textContent = `📍 Cidades — ${uf}`;
+  document.getElementById('map-city-list').innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+
+  try {
+    const data = await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=${dBU}&states=${uf}`);
+    const cities = data.cities||[];
+    const maxR = Math.max(...cities.map(c=>c.totalRevenue||0));
+    document.getElementById('map-city-list').innerHTML = cities.slice(0,30).map(c=>`
+      <div style="background:var(--bgc);border:1px solid var(--bdr);border-radius:var(--rs);padding:8px 10px">
+        <div style="font-weight:600;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.city}</div>
+        <div style="display:flex;justify-content:space-between;font-size:.7rem;margin-top:4px">
+          <span style="color:var(--tm)">${fmtN(c.customerCount)} clientes</span>
+          <span style="color:var(--ok)">${fmt(c.totalRevenue)}</span>
+        </div>
+        <div style="height:3px;background:var(--bdr);border-radius:2px;margin-top:6px;overflow:hidden">
+          <div style="height:100%;background:var(--ac);width:${((c.totalRevenue/maxR)*100).toFixed(1)}%;border-radius:2px"></div>
+        </div>
+      </div>
+    `).join('') || '<p style="color:var(--tm);font-size:.8rem;padding:10px">Nenhuma cidade encontrada</p>';
+  } catch(err) {
+    document.getElementById('map-city-list').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;
+  }
+}
+
+function closeCityDrill() {
+  document.getElementById('map-cities').style.display='none';
+}
+
+// ── MODAL GRÁFICO ──
+async function openChartModal(type) {
+  const s=document.getElementById('d-start').value, e=document.getElementById('d-end').value;
+  const titles={rfm:'Distribuição RFM',seg:'Segmentos de Clientes',produtos:'Top Produtos',estados:'Receita por Estado'};
+  document.getElementById('mch-title').textContent = titles[type]||type;
+  document.getElementById('mch-sub').textContent = `Período: ${fmtD(s)} a ${fmtD(e)}`;
+  openModal('modal-chart');
+
+  let html='', data;
+  try {
+    if(type==='rfm') {
+      data=(await api(`/rfm/distribution?startDate=${s}&endDate=${e}&businessUnit=${dBU}`)).distribution||[];
+      html=`<table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="text-align:left;padding:8px">Segmento</th><th style="text-align:right;padding:8px">Clientes</th><th style="text-align:right;padding:8px">%</th></tr></thead><tbody>${data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:8px">${rfmBadge(d.segment)}</td><td style="text-align:right;padding:8px">${fmtN(d.customerCount)}</td><td style="text-align:right;padding:8px">${d.percentage}%</td></tr>`).join('')}</tbody></table>`;
+    } else if(type==='seg') {
+      data=(await api(`/segments?startDate=${s}&endDate=${e}&businessUnit=${dBU}`)).segments||[];
+      html=`<table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="text-align:left;padding:8px">Segmento</th><th style="text-align:right;padding:8px">Clientes</th></tr></thead><tbody>${data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:8px">${segBadge(d.segment)}</td><td style="text-align:right;padding:8px">${fmtN(d.customerCount)}</td></tr>`).join('')}</tbody></table>`;
+    } else if(type==='produtos') {
+      data=(await api(`/products/top-selling?orderBy=quantity&limit=20&startDate=${s}&endDate=${e}&businessUnit=${dBU}`)).products||[];
+      html=`<table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="text-align:left;padding:8px">Produto</th><th style="text-align:right;padding:8px">Qtd</th><th style="text-align:right;padding:8px">Receita</th></tr></thead><tbody>${data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:8px">${d.code||d.name}</td><td style="text-align:right;padding:8px">${fmtN(d.totalQty||d.totalQuantitySold)}</td><td style="text-align:right;padding:8px;color:var(--ok)">${fmt(d.totalRevenue)}</td></tr>`).join('')}</tbody></table>`;
+    } else if(type==='estados') {
+      data=(await api(`/geolocation/states?startDate=${s}&endDate=${e}&businessUnit=${dBU}`)).states||[];
+      html=`<table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="text-align:left;padding:8px">Estado</th><th style="text-align:right;padding:8px">Clientes</th><th style="text-align:right;padding:8px">Receita</th></tr></thead><tbody>${data.slice(0,20).map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:8px;font-weight:700">${d.location}</td><td style="text-align:right;padding:8px">${fmtN(d.customerCount)}</td><td style="text-align:right;padding:8px;color:var(--ok)">${fmt(d.totalRevenue)}</td></tr>`).join('')}</tbody></table>`;
+    }
+    document.getElementById('mch-table').innerHTML = html;
+  } catch(err) {
+    document.getElementById('mch-table').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// CLIENTES
+// ══════════════════════════════════════════════════════════════
+async function loadClientes() {
+  const s=document.getElementById('c-start').value, e=document.getElementById('c-end').value;
+  const seg=document.getElementById('c-seg').value;
+  const search=document.getElementById('c-search').value.trim();
+  if(!s||!e) return;
+
+  document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+
+  try {
+    let clients=[];
+    if(seg) {
+      const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${cBU}`);
+      clients=(d.customers||[]).map(c=>({...c,_seg:seg}));
+    } else {
+      let q=`/clients?startDate=${s}&endDate=${e}&businessUnit=${cBU}&page=1&limit=500`;
+      if(search) q+=`&search=${encodeURIComponent(search)}`;
+      const d=await api(q);
+      clients=d.clients||[];
+    }
+
+    // Calcular segmento para cada cliente
+    const sorted=[...clients].sort((a,b)=>b.totalSpent-a.totalSpent);
+    const vipN=Math.ceil(sorted.length*0.1);
+    sorted.forEach((c,i)=>{
+      if(!c._seg) {
+        const d=days(c.lastPurchaseDate||c.lastDate);
+        if(i<vipN) c._seg='vip';
+        else if(c.totalOrders>=3||c.orderCount>=3) c._seg='recorrente';
+        else if(d!==null&&d>90) c._seg='inativo';
+        else if(d!==null&&d>30) c._seg='em_risco';
+        else c._seg='novo';
+      }
+    });
+
+    cData=sorted;
+    cPage=1;
+    renderClienteTable();
+    renderClienteKPIs(clients);
+
+    // Load KPIs separadamente
+    loadClienteKPIs(s, e);
+  } catch(err) {
+    document.getElementById('c-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:16px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+function renderClienteKPIs(clients) {
+  const total=clients.length;
+  const spend=clients.reduce((s,c)=>s+parseFloat(c.totalSpent||0),0);
+  const orders=clients.reduce((s,c)=>s+parseInt(c.totalOrders||c.orderCount||0),0);
+  const avgT=total>0?spend/orders:0;
+  document.getElementById('c-kpis').style.display='grid';
+  document.getElementById('c-kpis').innerHTML=[
+    {l:'Total de Clientes',v:fmtN(total),c:''},
+    {l:'Faturamento',v:fmt(spend),c:'accent'},
+    {l:'Total Pedidos',v:fmtN(orders),c:''},
+    {l:'Ticket Médio',v:fmt(avgT),c:'ok'},
+  ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-label">${k.l}</div><div class="kpi-value">${k.v}</div></div>`).join('');
+}
+
+async function loadClienteKPIs(s, e) {
+  try {
+    const kpi=await api(`/dashboard/kpis?startDate=${s}&endDate=${e}&businessUnit=${cBU}`);
+    document.getElementById('c-kpis').style.display='grid';
+    document.getElementById('c-kpis').innerHTML=[
+      {l:'Clientes Ativos',v:fmtN(kpi.activeClients),c:'ok'},
+      {l:'Inativos',v:fmtN(kpi.inactiveClients),c:'err'},
+      {l:'Novos',v:fmtN(kpi.newClients),c:'eco'},
+      {l:'Faturamento',v:fmt(kpi.totalRevenue),c:'accent'},
+      {l:'Pedidos',v:fmtN(kpi.totalOrders),c:''},
+      {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
+      {l:'Freq. Compra',v:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x',c:''},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-label">${k.l}</div><div class="kpi-value">${k.v}</div></div>`).join('');
+  } catch(e){}
+}
+
+const PER_PAGE=50;
+function renderClienteTable() {
+  const start=(cPage-1)*PER_PAGE, end=start+PER_PAGE;
+  const page=cData.slice(start,end);
+  document.getElementById('c-count').textContent=`${fmtN(cData.length)} clientes`;
+
+  if(!page.length){
+    document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="empty-state"><div class="icon">👥</div><p>Nenhum cliente encontrado</p></div></td></tr>';
+    document.getElementById('c-pagination').innerHTML='';
+    return;
+  }
+
+  document.getElementById('c-tbody').innerHTML=page.map(c=>{
+    const bu=c.businessUnit||c.origem||'';
+    const rowCls=bu==='ecommerce'?'eco-row':bu.includes('dist')?'dist-row':'';
+    const d=days(c.lastPurchaseDate||c.lastDate);
+    return `<tr class="${rowCls}">
+      <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
+      <td>${unitBadge(bu)}</td>
+      <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.72rem;color:var(--tm)">${c.cpf||'—'}</td>
+      <td style="font-size:.72rem">${fmtD(c.firstPurchaseDate||c.firstDate)}</td>
+      <td style="font-size:.72rem">${fmtD(c.lastPurchaseDate||c.lastDate)}</td>
+      <td style="text-align:center;font-weight:700">${fmtN(c.totalOrders||c.orderCount||0)}</td>
+      <td style="color:var(--ok);font-weight:700">${fmt(c.totalSpent)}</td>
+      <td>${fmt(c.averageTicket||0)}</td>
+      <td>${daysBadge(d)}</td>
+      <td>${segBadge(c._seg)}</td>
+    </tr>`;
+  }).join('');
+
+  renderPagination('c-pagination', cPage, Math.ceil(cData.length/PER_PAGE), p=>{cPage=p;renderClienteTable();});
+}
+
+function sortClientes(key) {
+  if(cSort.key===key) cSort.asc=!cSort.asc;
+  else { cSort.key=key; cSort.asc=false; }
+  cData.sort((a,b)=>{
+    const va=a[key]??'', vb=b[key]??'';
+    const r = typeof va==='number'?va-vb:String(va).localeCompare(String(vb),'pt-BR');
+    return cSort.asc?r:-r;
+  });
+  cPage=1; renderClienteTable();
+}
+
+function renderPagination(id, cur, total, cb) {
+  const el=document.getElementById(id);
+  if(total<=1){el.innerHTML='';return;}
+  const pages=[];
+  const add=p=>pages.push(`<button class="pag-btn ${p===cur?'active':''}" onclick="(${cb.toString()})(${p})">${p}</button>`);
+  if(cur>1) pages.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur-1})">‹</button>`);
+  if(total<=7){for(let i=1;i<=total;i++)add(i);}
+  else{
+    add(1);
+    if(cur>3) pages.push('<span style="color:var(--tm);padding:0 4px">…</span>');
+    for(let i=Math.max(2,cur-1);i<=Math.min(total-1,cur+1);i++)add(i);
+    if(cur<total-2) pages.push('<span style="color:var(--tm);padding:0 4px">…</span>');
+    add(total);
+  }
+  if(cur<total) pages.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur+1})">›</button>`);
+  pages.push(`<span class="pag-info">Pág ${cur} de ${total}</span>`);
+  el.innerHTML=pages.join('');
+}
+
+// ── MODAL CLIENTE ──
+async function openClientModal(id) {
+  document.getElementById('mc-name').textContent='Carregando...';
+  document.getElementById('mc-sub').textContent='';
+  document.getElementById('mc-info').innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+  document.getElementById('mc-orders').innerHTML='';
+  openModal('modal-cliente');
+
+  try {
+    const c=await api(`/clients/${id}`);
+    const name=c.name||'—';
+    const bu=c.businessUnit||c.origem||'';
+    document.getElementById('mc-name').textContent=name;
+    document.getElementById('mc-sub').innerHTML=unitBadge(bu);
+
+    const d=days(c.lastPurchaseDate||c.lastDate);
+    document.getElementById('mc-info').innerHTML=`
+      <div class="info-item"><label>CPF/CNPJ</label><span>${c.cpf||'—'}</span></div>
+      <div class="info-item"><label>Cidade</label><span>${c.city||'—'}</span></div>
+      <div class="info-item"><label>Estado</label><span>${c.state||'—'}</span></div>
+      <div class="info-item"><label>Unidade</label><span>${bu}</span></div>
+      <div class="info-item"><label>1ª Compra</label><span>${fmtD(c.firstPurchaseDate||c.firstDate)}</span></div>
+      <div class="info-item"><label>Última Compra</label><span>${fmtD(c.lastPurchaseDate||c.lastDate)}</span></div>
+      <div class="info-item"><label>Total de Pedidos</label><span class="big">${fmtN(c.totalOrders||c.orderCount||0)}</span></div>
+      <div class="info-item"><label>Total Gasto</label><span class="big">${fmt(c.totalSpent)}</span></div>
+      <div class="info-item"><label>Ticket Médio</label><span>${fmt(c.averageTicket||0)}</span></div>
+      <div class="info-item"><label>Dias Sem Comprar</label><span>${daysBadge(d)}</span></div>
+    `;
+
+    // Pedidos (sem endpoint específico, mostramos dados disponíveis)
+    document.getElementById('mc-orders').innerHTML=`
+      <div class="order-item" style="justify-content:center;cursor:default;color:var(--tm);font-size:.8rem">
+        📋 ${fmtN(c.totalOrders||0)} pedidos realizados no período selecionado
+      </div>
+    `;
+  } catch(err) {
+    document.getElementById('mc-info').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// RELATÓRIOS
+// ══════════════════════════════════════════════════════════════
+function syncReportDates() {
+  const s=document.getElementById('d-start').value||document.getElementById('c-start').value;
+  const e=document.getElementById('d-end').value||document.getElementById('c-end').value;
+  if(s) document.getElementById('r-start').value=s;
+  if(e) document.getElementById('r-end').value=e;
+}
+
+async function loadReportKPIs() {
+  const s=document.getElementById('r-start').value, e=document.getElementById('r-end').value;
+  const bu=document.getElementById('r-bu').value;
+  if(!s||!e) return;
+  try {
+    const kpi=await api(`/dashboard/kpis?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+    document.getElementById('r-kpis').style.display='grid';
+    document.getElementById('r-kpis').innerHTML=[
+      {l:'Faturamento',v:fmt(kpi.totalRevenue),c:'accent'},
+      {l:'Pedidos',v:fmtN(kpi.totalOrders),c:''},
+      {l:'Clientes',v:fmtN(kpi.activeClients),c:'ok'},
+      {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-label">${k.l}</div><div class="kpi-value">${k.v}</div></div>`).join('');
+  } catch(e){}
+}
+
+async function updateCityFilter() {
+  const uf=document.getElementById('r-uf').value;
+  const cityEl=document.getElementById('r-city');
+  cityEl.disabled=!uf;
+  if(!uf){cityEl.innerHTML='<option value="">Todas</option>';return;}
+  const s=document.getElementById('r-start').value, e=document.getElementById('r-end').value;
+  if(!s||!e) return;
+  try {
+    const d=await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=all&states=${uf}`);
+    cityEl.innerHTML='<option value="">Todas</option>'+(d.cities||[]).map(c=>`<option value="${c.city}">${c.city}</option>`).join('');
+  } catch(e){}
+}
+
+async function previewReport(type) {
+  const s=document.getElementById('r-start').value, e=document.getElementById('r-end').value;
+  const bu=document.getElementById('r-bu').value;
+  const seg=document.getElementById('r-seg').value;
+  const uf=document.getElementById('r-uf').value;
+  const ticket=document.getElementById('r-ticket').value;
+  if(!s||!e){alert('Selecione o período.');return;}
+
+  const area=document.getElementById('preview-area');
+  area.style.display='block';
+  area.innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
+  area.scrollIntoView({behavior:'smooth'});
+
+  try {
+    // Buscar dados base
+    let q=`/clients?startDate=${s}&endDate=${e}&businessUnit=${bu}&page=1&limit=1000`;
+    let clients=(await api(q)).clients||[];
+
+    // Filtrar por segmento
+    if(seg) {
+      const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+      const ids=new Set((d.customers||[]).map(c=>c.id||c.contato_id));
+      clients=clients.filter(c=>ids.has(c.id||c.contato_id||c.contato_id));
+      if(!clients.length) clients=(d.customers||[]);
+    }
+
+    // Filtrar por UF
+    if(uf) clients=clients.filter(c=>(c.state||'').toUpperCase()===uf);
+
+    // Filtrar por ticket
+    if(ticket) {
+      const [min,max]=ticket==='1000+'?[1000,Infinity]:ticket.split('-').map(Number);
+      clients=clients.filter(c=>{const t=c.averageTicket||0;return t>=min&&(max===Infinity||t<=max);});
+    }
+
+    // Gerar preview por tipo
+    const {headers, rows, filename} = buildReport(type, clients, s, e);
+
+    area.innerHTML=`
+      <div class="preview-wrap">
+        <div class="preview-header">
+          <div>
+            <div class="preview-title">📋 Pré-visualização: ${type.toUpperCase()}</div>
+            <div class="preview-count">${fmtN(rows.length)} registros encontrados</div>
+          </div>
+          <button class="btn-download" onclick="downloadReport('${type}')">⬇️ Confirmar e Baixar</button>
+        </div>
+        <div class="preview-table-wrap">
+          <table class="preview-table">
+            <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rows.slice(0,50).map(r=>`<tr>${r.map(v=>`<td>${v??''}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>
+        ${rows.length>50?`<p style="color:var(--tm);font-size:.72rem;text-align:center;padding:8px">Mostrando 50 de ${fmtN(rows.length)} registros</p>`:''}
+      </div>`;
+
+    // Salvar dados para download
+    window._reportData={headers,rows,filename};
+  } catch(err) {
+    area.innerHTML=`<p style="color:var(--err);padding:16px">❌ ${err.message}</p>`;
+  }
+}
+
+function buildReport(type, clients, s, e) {
+  const phone=p=>{if(!p)return'';const n=String(p).replace(/\D/g,'');return n.startsWith('55')?`+${n}`:`+55${n}`;};
+  const name=n=>{const parts=(n||'').trim().split(' ');return{fn:parts[0]||'',ln:parts.slice(1).join(' ')||''};};
+
+  let headers=[], rows=[], filename='relatorio';
+
+  if(type==='meta') {
+    headers=['email','phone','fn','ln'];
+    rows=clients.filter(c=>c.name).map(c=>{const nm=name(c.name);return[c.cpf||'',phone(c.cpf),nm.fn,nm.ln];});
+    filename='meta_ads_audiencia';
+  } else if(type==='google') {
+    headers=['Email','First Name','Last Name','Phone'];
+    rows=clients.map(c=>{const nm=name(c.name);return['',nm.fn,nm.ln,phone(c.cpf)];});
+    filename='google_ads_audiencia';
+  } else if(type==='tiktok') {
+    headers=['email','phone_number'];
+    rows=clients.map(c=>[c.cpf||'',phone(c.cpf)]);
+    filename='tiktok_ads_audiencia';
+  } else if(type==='linkedin') {
+    headers=['email','firstName','lastName'];
+    rows=clients.map(c=>{const nm=name(c.name);return['',nm.fn,nm.ln];});
+    filename='linkedin_ads_audiencia';
+  } else if(type==='pinterest'||type==='twitter') {
+    headers=['email'];
+    rows=clients.map(c=>[c.cpf||'']);
+    filename=`${type}_ads_audiencia`;
+  } else if(type==='kwai') {
+    headers=['phone'];
+    rows=clients.map(c=>[phone(c.cpf)]);
+    filename='kwai_audiencia';
+  } else if(type==='clientes-completo') {
+    headers=['Nome','CPF','Cidade','Estado','Unidade','1ª Compra','Última Compra','Pedidos','Total Gasto','Ticket Médio'];
+    rows=clients.map(c=>[c.name,c.cpf,c.city,c.state,c.businessUnit,fmtD(c.firstPurchaseDate),fmtD(c.lastPurchaseDate),c.totalOrders,c.totalSpent,c.averageTicket]);
+    filename='clientes_completo';
+  } else if(type==='top-clientes') {
+    headers=['Rank','Nome','Cidade','Estado','Pedidos','Total Gasto','Ticket Médio'];
+    rows=clients.map((c,i)=>[i+1,c.name,c.city,c.state,c.totalOrders,c.totalSpent,c.averageTicket]);
+    filename='top_clientes';
+  } else if(type==='inativos') {
+    const inats=clients.filter(c=>days(c.lastPurchaseDate)>90);
+    headers=['Nome','Cidade','Estado','Última Compra','Dias Sem Comprar','Total Gasto'];
+    rows=inats.map(c=>[c.name,c.city,c.state,fmtD(c.lastPurchaseDate),days(c.lastPurchaseDate),c.totalSpent]);
+    filename='clientes_inativos';
+  } else if(type==='rfm-completo') {
+    headers=['Nome','Cidade','Estado','Pedidos','Total Gasto','Ticket Médio','Dias Últ. Compra','Segmento Estimado'];
+    const sorted=[...clients].sort((a,b)=>b.totalSpent-a.totalSpent);
+    const vipN=Math.ceil(sorted.length*0.1);
+    rows=sorted.map((c,i)=>{
+      const d=days(c.lastPurchaseDate);
+      let seg=i<vipN?'VIP':c.totalOrders>=3?'Recorrente':d>90?'Inativo':d>30?'Em Risco':'Novo';
+      return[c.name,c.city,c.state,c.totalOrders,c.totalSpent,c.averageTicket,d,seg];
+    });
+    filename='analise_rfm';
+  } else {
+    headers=['Dado'];rows=[['Sem dados']];filename='relatorio';
+  }
+
+  return {headers, rows, filename:`${filename}_${s}_${e}.csv`};
+}
+
+function downloadReport() {
+  const {headers,rows,filename}=window._reportData||{};
+  if(!headers) return;
+  const bom='\uFEFF';
+  const csv=bom+[headers,...rows].map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=filename;
+  a.click();
+}
+
+// ══════════════════════════════════════════════════════════════
+// DISPARO MANUAL
+// ══════════════════════════════════════════════════════════════
+function syncDisparoDates() {
+  const s=document.getElementById('d-start').value||document.getElementById('c-start').value;
+  const e=document.getElementById('d-end').value||document.getElementById('c-end').value;
+  if(s) document.getElementById('dm-start').value=s;
+  if(e) document.getElementById('dm-end').value=e;
+}
+
+async function loadDisparo() {
+  const s=document.getElementById('dm-start').value, e=document.getElementById('dm-end').value;
+  const seg=document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo';
+  const bu=document.getElementById('dm-bu').value;
+  if(!s||!e){alert('Selecione o período.');return;}
+
+  document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+
+  try {
+    const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+    dmData=(d.customers||[]);
+    dmPage=1;
+    document.getElementById('dm-count').textContent=`${fmtN(dmData.length)} clientes identificados`;
+    renderDisparoTable();
+
+    // KPIs
+    const total=dmData.length;
+    const spend=dmData.reduce((s,c)=>s+parseFloat(c.totalSpent||0),0);
+    document.getElementById('dm-kpis').style.display='grid';
+    document.getElementById('dm-kpis').innerHTML=[
+      {l:'Clientes',v:fmtN(total),c:''},
+      {l:'Faturamento Potencial',v:fmt(spend),c:'accent'},
+    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-label">${k.l}</div><div class="kpi-value">${k.v}</div></div>`).join('');
+  } catch(err) {
+    document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="10" style="color:var(--err);padding:16px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+function renderDisparoTable() {
+  const seg=document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo';
+  const oppMap={inativo:{l:'Reativar',c:'opp-reativar'},em_risco:{l:'Em Risco',c:'opp-risco'},vip:{l:'Manter VIP',c:'opp-vip'},recorrente:{l:'Fidelizar',c:'opp-fidelizar'},novo:{l:'Engajar',c:'opp-fidelizar'}};
+  const opp=oppMap[seg]||{l:seg,c:'opp-fidelizar'};
+
+  const start=(dmPage-1)*PER_PAGE, end=start+PER_PAGE;
+  const page=dmData.slice(start,end);
+
+  if(!page.length){
+    document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="empty-state"><div class="icon">📱</div><p>Nenhum cliente encontrado para este segmento</p></div></td></tr>';
+    document.getElementById('dm-pagination').innerHTML='';
+    return;
+  }
+
+  document.getElementById('dm-tbody').innerHTML=page.map(c=>{
+    const bu=c.businessUnit||c.origem||'';
+    const d=c.daysSince??days(c.lastDate||c.lastPurchaseDate);
+    const waNum=(c.cpf||'').replace(/\D/g,'');
+    const waUrl=waNum?`https://wa.me/55${waNum}`:'#';
+    return `<tr>
+      <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
+      <td>${unitBadge(bu)}</td>
+      <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.72rem">${fmtD(c.lastDate||c.lastPurchaseDate)}</td>
+      <td>${daysBadge(d)}</td>
+      <td style="text-align:center">${fmtN(c.orderCount||c.totalOrders||0)}</td>
+      <td style="color:var(--ok);font-weight:700">${fmt(c.totalSpent)}</td>
+      <td>${fmt(c.averageTicket||0)}</td>
+      <td><span class="opp-badge ${opp.c}">${opp.l}</span></td>
+      <td>${waNum?`<a class="btn-wa" href="${waUrl}" target="_blank">📱 WhatsApp</a>`:'<span style="color:var(--tm);font-size:.72rem">Sem número</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  renderPagination('dm-pagination', dmPage, Math.ceil(dmData.length/PER_PAGE), p=>{dmPage=p;renderDisparoTable();});
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODAL UTILS
+// ══════════════════════════════════════════════════════════════
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+  document.body.style.overflow='';
+}
+document.querySelectorAll('.overlay').forEach(o=>{
+  o.addEventListener('click',e=>{if(e.target===o)closeModal(o.id);});
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.overlay.open').forEach(o=>closeModal(o.id));});
+
+// ══════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════
+initDates();
+loadDashboard();
+</script>
+</body>
+</html>
