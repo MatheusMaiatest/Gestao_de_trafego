@@ -172,9 +172,9 @@ app.get('/api/clients', async (req, res) => {
        MAX(contato_nome) AS name,
        MAX(contato_numerodocumento) AS cpf,
        MAX(contato_tipopessoa) AS tipoPessoa,
-       MAX(transporte_etiqueta_municipio) AS city,
-       MAX(transporte_etiqueta_uf) AS stateUF,
-       MAX(kdd_cliente_estado) AS state,
+       MAX(NULLIF(TRIM(transporte_etiqueta_municipio),'')) AS city,
+       MAX(NULLIF(TRIM(transporte_etiqueta_uf),'')) AS stateUF,
+       MAX(NULLIF(TRIM(kdd_cliente_estado),'')) AS state,
        MIN(data) AS firstPurchaseDate,
        MAX(data) AS lastPurchaseDate,
        COUNT(*) AS totalOrders,
@@ -332,6 +332,16 @@ app.get('/api/clients/:id', async (req, res) => {
        WHERE contato_id = ? ORDER BY data DESC LIMIT 50`, [id]
     );
 
+    // Buscar email via clientes_tray
+    let email = null;
+    const [[trayE]] = await conn.execute(
+      `SELECT email FROM clientes_tray_ecommerce WHERE id = ? LIMIT 1`, [id]
+    ).catch(() => [[]]);
+    const [[trayD]] = await conn.execute(
+      `SELECT email FROM clientes_tray_distribuicao WHERE id = ? LIMIT 1`, [id]
+    ).catch(() => [[]]);
+    email = trayE?.email || trayD?.email || null;
+
     const pedidos = [...pedidosE, ...pedidosD]
       .sort((a,b) => new Date(b.data) - new Date(a.data))
       .map(p => ({
@@ -344,14 +354,14 @@ app.get('/api/clients/:id', async (req, res) => {
       }));
 
     conn.release();
-    res.json({ ...client, pedidos });
+    res.json({ ...client, email, pedidos });
   } catch (err) {
     logger.error('clients/:id: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── PEDIDO por ID — retorna detalhes completos ────────────────
+// ── PEDIDO por ID — retorna detalhes completos com desmembramento de kits ────
 app.get('/api/orders/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -372,21 +382,99 @@ app.get('/api/orders/:id', async (req, res) => {
     if (!ped) { conn.release(); return res.status(404).json({ error: 'Pedido não encontrado.' }); }
 
     const origem = ped.origem;
-    const itensTable = origem === 'ecommerce'
+    const itensTable   = origem === 'ecommerce'
       ? 'bling_pedidos_venda_detalhes_itens_ecommerce'
       : 'bling_pedidos_venda_detalhes_itens_distribuicao';
+    const prodTable    = origem === 'ecommerce'
+      ? 'bling_produtos_detalhes_ecommerce'
+      : 'bling_produtos_detalhes_distribuicao';
+    const compTable    = origem === 'ecommerce'
+      ? 'bling_produtos_estruturas_componentes_ecommerce'
+      : 'bling_produtos_estruturas_componentes_distribuicao';
 
-    const [itens] = await conn.execute(
-      `SELECT itens_codigo AS sku,
-              itens_id AS id,
-              itens_descricao AS descricao,
-              itens_quantidade AS quantidade,
-              itens_valor AS precoUnitario,
-              itens_desconto AS desconto,
-              (itens_valor * itens_quantidade) AS total
-       FROM \`${itensTable}\`
-       WHERE pedido_venda_id = ?`, [id]
+    // Buscar itens do pedido
+    const [itensRaw] = await conn.execute(
+      `SELECT i.itens_codigo AS sku,
+              i.itens_id AS id,
+              i.itens_produto_id AS produto_id,
+              p.nome AS nome_produto,
+              i.itens_quantidade AS quantidade,
+              i.itens_valor AS precoUnitario,
+              i.itens_desconto AS desconto,
+              (i.itens_valor * i.itens_quantidade) AS total
+       FROM \`${itensTable}\` i
+       LEFT JOIN \`${prodTable}\` p ON p.id = i.itens_produto_id
+       WHERE i.pedido_venda_id = ?`, [id]
     ).catch(() => [[]]);
+
+    // Buscar componentes (kits) de todos os produto_ids presentes
+    const prodIds = (itensRaw||[]).map(i => i.produto_id).filter(Boolean);
+    let kitMap = {};
+
+    if (prodIds.length > 0) {
+      const ph = prodIds.map(() => '?').join(',');
+      const [comps] = await conn.execute(
+        `SELECT c.produto_pai_id, c.componentes_produto_id, c.componentes_quantidade,
+                p.codigo AS comp_sku, p.nome AS comp_nome
+         FROM \`${compTable}\` c
+         JOIN \`${prodTable}\` p ON p.id = c.componentes_produto_id
+         WHERE c.produto_pai_id IN (${ph})`, prodIds
+      ).catch(() => [[]]);
+
+      (comps||[]).forEach(c => {
+        if (!kitMap[c.produto_pai_id]) kitMap[c.produto_pai_id] = [];
+        kitMap[c.produto_pai_id].push({
+          sku: c.comp_sku,
+          nome: c.comp_nome,
+          qtdPorKit: parseFloat(c.componentes_quantidade)||1
+        });
+      });
+    }
+
+    // Expandir kits em itens individuais
+    const itens = [];
+    (itensRaw||[]).forEach(i => {
+      const comps = i.produto_id ? kitMap[i.produto_id] : null;
+      const qtdPedida = parseFloat(i.quantidade)||1;
+
+      if (comps && comps.length > 0) {
+        // É um kit — desmembrar em componentes
+        comps.forEach(c => {
+          const qtdComp = c.qtdPorKit * qtdPedida;
+          itens.push({
+            sku: c.sku || i.sku,
+            descricao: c.nome || c.sku,
+            quantidade: qtdComp,
+            precoUnitario: 0, // preço distribuído no kit
+            desconto: 0,
+            total: 0,
+            isComponente: true,
+            kitOrigem: i.nome_produto || i.sku
+          });
+        });
+      } else {
+        // Item simples
+        itens.push({
+          sku: i.sku,
+          descricao: i.nome_produto || i.sku,
+          quantidade: qtdPedida,
+          precoUnitario: parseFloat(i.precoUnitario)||0,
+          desconto: parseFloat(i.desconto)||0,
+          total: parseFloat(i.total)||0
+        });
+      }
+    });
+
+    // Buscar email do cliente via clientes_tray_ecommerce
+    let email = null;
+    if (ped.contato_id) {
+      const trayTable = origem === 'ecommerce' ? 'clientes_tray_ecommerce' : 'clientes_tray_distribuicao';
+      const [[tray]] = await conn.execute(
+        `SELECT email FROM \`${trayTable}\` WHERE id = ? LIMIT 1`,
+        [ped.contato_id]
+      ).catch(() => [[]]);
+      email = tray?.email || null;
+    }
 
     conn.release();
 
@@ -403,18 +491,14 @@ app.get('/api/orders/:id', async (req, res) => {
       origem,
       cliente: ped.contato_nome,
       cpf: ped.contato_numerodocumento,
-      cidade: ped.transporte_etiqueta_municipio,
-      estado: ped.transporte_etiqueta_uf,
+      email,
+      cidade: ped.transporte_etiqueta_municipio || ped.kdd_cliente_estado,
+      estado: ped.transporte_etiqueta_uf || ped.kdd_cliente_estado,
       cep: ped.transporte_etiqueta_cep,
+      bairro: ped.transporte_etiqueta_bairro,
+      endereco: ped.transporte_etiqueta_endereco,
       transportadora: ped.transporte_contato_nome,
-      itens: (itens||[]).map(i => ({
-        sku: i.sku,
-        descricao: i.descricao || i.sku,
-        quantidade: parseFloat(i.quantidade)||1,
-        precoUnitario: parseFloat(i.precoUnitario)||0,
-        desconto: parseFloat(i.desconto)||0,
-        total: parseFloat(i.total)||0
-      }))
+      itens
     });
   } catch (err) {
     logger.error('orders/:id: ' + err.message);
