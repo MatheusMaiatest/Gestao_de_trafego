@@ -750,8 +750,26 @@ function renderLegendaEx(elementId, faixas, min, max, dark, formatFn) {
   el.innerHTML = html;
 }
 
+// Mapeamento nome completo → sigla (GeoJSON codeforamerica usa nomes completos)
+var _UF_BY_NAME = {
+  'Acre':'AC','Alagoas':'AL','Amapá':'AP','Amazonas':'AM','Bahia':'BA',
+  'Ceará':'CE','Distrito Federal':'DF','Espírito Santo':'ES','Goiás':'GO',
+  'Maranhão':'MA','Mato Grosso':'MT','Mato Grosso do Sul':'MS','Minas Gerais':'MG',
+  'Pará':'PA','Paraíba':'PB','Paraná':'PR','Pernambuco':'PE','Piauí':'PI',
+  'Rio de Janeiro':'RJ','Rio Grande do Norte':'RN','Rio Grande do Sul':'RS',
+  'Rondônia':'RO','Roraima':'RR','Santa Catarina':'SC','São Paulo':'SP',
+  'Sergipe':'SE','Tocantins':'TO'
+};
+
 function getSigla(feature) {
-  return (feature.properties.sigla || feature.properties.name || '').toUpperCase().slice(-2);
+  var p = feature.properties;
+  // campo sigla direto (2 letras)
+  if (p.sigla && p.sigla.length === 2) return p.sigla.toUpperCase();
+  // nome com 2 letras = já é sigla
+  if (p.name && p.name.length === 2) return p.name.toUpperCase();
+  // nome completo → sigla pelo mapeamento
+  if (p.name && _UF_BY_NAME[p.name]) return _UF_BY_NAME[p.name];
+  return (p.sigla || p.name || '').toUpperCase().slice(-2);
 }
 
 function brazilProjection(w, h) {
