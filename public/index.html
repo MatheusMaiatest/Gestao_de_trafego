@@ -711,291 +711,383 @@ function renderLegenda(id,faixas,min,max,dark,fmtFn){
   }).join('');
 }
 
-// Mapeamento nome completo → sigla para o GeoJSON do codeforamerica
-const _NAME_TO_UF={
-  'Acre':'AC','Alagoas':'AL','Amapá':'AP','Amazonas':'AM','Bahia':'BA',
-  'Ceará':'CE','Distrito Federal':'DF','Espírito Santo':'ES','Goiás':'GO',
-  'Maranhão':'MA','Mato Grosso':'MT','Mato Grosso do Sul':'MS','Minas Gerais':'MG',
-  'Pará':'PA','Paraíba':'PB','Paraná':'PR','Pernambuco':'PE','Piauí':'PI',
-  'Rio de Janeiro':'RJ','Rio Grande do Norte':'RN','Rio Grande do Sul':'RS',
-  'Rondônia':'RO','Roraima':'RR','Santa Catarina':'SC','São Paulo':'SP',
-  'Sergipe':'SE','Tocantins':'TO'
-};
+// ── MAPAS D3 — idêntico ao exemplo.html ──────────────────────
+var MAP_GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
+var UF_IBGE_CODES = {AC:'12',AL:'27',AM:'13',AP:'16',BA:'29',CE:'23',DF:'53',ES:'32',GO:'52',MA:'21',MG:'31',MS:'50',MT:'51',PA:'15',PB:'25',PE:'26',PI:'22',PR:'41',RJ:'33',RN:'24',RO:'11',RR:'14',RS:'43',SC:'42',SE:'28',SP:'35',TO:'17'};
+var _drillGeoCache = {};
+var _drillCurrentUF = null;
+var _drillCurrentMode = 'nf';
+var TRANSP_COLOR_MAP = {};
+var CHART_COLORS_MAP = ['#5c6bc0','#42a5f5','#ab47bc','#26a69a','#ef5350','#ffa726','#66bb6a','#ec407a','#29b6f6','#d4e157'];
 
-function getSigla(f){
-  const p=f.properties;
-  // Tenta campo sigla direto (IBGE e outros GeoJSONs)
-  if(p.sigla&&p.sigla.length===2) return p.sigla.toUpperCase();
-  // Tenta campo name com 2 chars (alguns GeoJSONs já têm a sigla em name)
-  if(p.name&&p.name.length===2) return p.name.toUpperCase();
-  // Mapeamento pelo nome completo (codeforamerica brazil-states.geojson)
-  if(p.name&&_NAME_TO_UF[p.name]) return _NAME_TO_UF[p.name];
-  // Fallback: últimos 2 chars
-  return (p.sigla||p.name||'').toUpperCase().slice(-2);
+function calcularFaixas(valores, numFaixas) {
+  if (valores.length === 0) return [];
+  var sorted = valores.slice().sort(function(a,b){ return a - b; });
+  var min = sorted[0] || 0;
+  var max = sorted[sorted.length - 1] || 1;
+  if (max - min < numFaixas) {
+    var faixas = [];
+    var step = Math.max(1, Math.ceil((max - min) / numFaixas));
+    for (var i = 0; i < numFaixas; i++) {
+      var lo = min + i * step;
+      var hi = i === numFaixas - 1 ? max : min + (i + 1) * step - 1;
+      if (lo <= max) faixas.push({lo: lo, hi: hi});
+    }
+    return faixas;
+  }
+  var faixasP = [];
+  var percentis = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+  for (var i = 0; i < percentis.length - 1; i++) {
+    var idxLo = Math.floor(percentis[i] * (sorted.length - 1));
+    var idxHi = Math.floor(percentis[i + 1] * (sorted.length - 1));
+    var lo = sorted[idxLo];
+    var hi = sorted[idxHi];
+    if (lo !== hi || i === 0) {
+      faixasP.push({lo: lo, hi: i === percentis.length - 2 ? max : hi});
+    }
+  }
+  return faixasP;
 }
 
-function brazilProj(w,h){
-  // Idêntico ao exemplo.html — fitSize garante que o Brasil ocupe todo o SVG
-  const proj=d3.geoMercator().fitSize([w-16,h-16],{type:'FeatureCollection',features:GEO_DATA.features});
-  const t=proj.translate();proj.translate([t[0]+8,t[1]+8]);
+function getHeatColorEx(value, min, max, dark) {
+  if (max === min) return dark ? '#5c6bc0' : '#3949ab';
+  var normalized = (value - min) / (max - min);
+  var colors = dark
+    ? ['#1e3a8a', '#0ea5e9', '#10b981', '#fbbf24', '#f97316', '#dc2626']
+    : ['#3b82f6', '#06b6d4', '#22c55e', '#eab308', '#f97316', '#dc2626'];
+  var idx = normalized * (colors.length - 1);
+  var i = Math.floor(idx);
+  var f = idx - i;
+  if (i >= colors.length - 1) return colors[colors.length - 1];
+  var c1 = colors[i], c2 = colors[i + 1];
+  var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
+  var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
+  var r=Math.round(r1+(r2-r1)*f),g=Math.round(g1+(g2-g1)*f),b=Math.round(b1+(b2-b1)*f);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
+
+function renderLegendaEx(elementId, faixas, min, max, dark, formatFn) {
+  var el = document.getElementById(elementId);
+  if (!el || faixas.length === 0) return;
+  var html = faixas.map(function(f) {
+    var midValue = (f.lo + f.hi) / 2;
+    var cor = getHeatColorEx(midValue, min, max, dark);
+    var label = formatFn ? formatFn(f.lo) + ' - ' + formatFn(f.hi) : f.lo + ' - ' + f.hi;
+    return '<div class="legend-item" style="pointer-events:none;padding:3px 8px">' +
+      '<span class="legend-dot" style="background:' + cor + '"></span>' +
+      '<span style="font-size:.68rem">' + label + '</span></div>';
+  }).join('');
+  el.innerHTML = html;
+}
+
+function getSigla(feature) {
+  return (feature.properties.sigla || feature.properties.name || '').toUpperCase().slice(-2);
+}
+
+function brazilProjection(w, h) {
+  var proj = d3.geoMercator();
+  proj.fitSize([w-16, h-16], { type:'FeatureCollection', features:GEO_DATA.features });
+  var t = proj.translate();
+  proj.translate([t[0]+8, t[1]+8]);
   return proj;
 }
 
-async function loadGeoData(){
-  // Idêntico ao exemplo.html — URL única, sem fallback para IBGE
-  const MAP_GEO_URL='https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
-  try {
-    const r=await fetch(MAP_GEO_URL);
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    GEO_DATA=await r.json();
-  } catch(e){
-    console.warn('Não foi possível carregar GeoJSON dos estados', e);
-  }
-}
+// Tooltip mapa
+var _mapTipEl=null;
+function getMapTip(){ if(!_mapTipEl){ _mapTipEl=document.getElementById('map-tooltip'); if(!_mapTipEl){ _mapTipEl=document.createElement('div'); _mapTipEl.id='map-tooltip'; _mapTipEl.className='map-tooltip'; document.body.appendChild(_mapTipEl); } } return _mapTipEl; }
+function showMapTip(event,text){ var t=getMapTip(); t.textContent=text; t.style.opacity='1'; t.style.left=(event.clientX+12)+'px'; t.style.top=(event.clientY-32)+'px'; }
+function moveMapTip(event){ var t=getMapTip(); t.style.left=(event.clientX+12)+'px'; t.style.top=(event.clientY-32)+'px'; }
+function hideMapTip(){ getMapTip().style.opacity='0'; }
 
-function renderMapNF(states){
-  if(!GEO_DATA) return;
-  const ufMap={};states.forEach(s=>{ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue};});
-  const vals=Object.values(ufMap).map(v=>v.customers).filter(v=>v>0);
-  const min=vals.length?Math.min(...vals):0,max=vals.length?Math.max(...vals):1;
-  const dark=document.documentElement.getAttribute('data-theme')==='dark';
-  const faixas=calcFaixas(vals,5);
-  renderLegenda('leg-nf',faixas,min,max,dark,null);
-  const W=460,H=400,proj=brazilProj(W,H),path=d3.geoPath().projection(proj);
-  const svg=d3.select('#svg-nf');svg.selectAll('*').remove();
-  svg.attr('viewBox',`0 0 ${W} ${H}`).style('display','block');
-  document.getElementById('ml-nf').style.display='none';
-  const g=svg.append('g');
-  g.selectAll('path').data(GEO_DATA.features).enter().append('path')
-    .attr('class','state-path').attr('d',path)
-    .attr('fill',d=>{const uf=getSigla(d);const v=ufMap[uf]?.customers||0;return v?getHeatColor(v,min,max,dark):(dark?'#0d1117':'#f0f2f8');})
-    .attr('stroke',dark?'#2a2d3e':'#cbd5e1').attr('stroke-width','0.5')
-    .on('mouseenter',(e,d)=>{const uf=getSigla(d);const v=ufMap[uf];showTip(e,uf+(v?`: ${fmtN(v.customers)} clientes`:''));})
-    .on('mousemove',moveTip).on('mouseleave',hideTip)
-    .on('click',(e,d)=>{
-      svg.selectAll('.state-path').classed('selected',false);
-      d3.select(e.target).classed('selected',true);
-      openDrillModal(getSigla(d),d.properties.name||getSigla(d),'clientes',ufMap);
-    });
-  g.selectAll('text').data(GEO_DATA.features).enter().append('text')
-    .attr('transform',d=>{const c=path.centroid(d);return `translate(${c})`;})
-    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700')
-    .attr('pointer-events','none')
-    .attr('fill',d=>{const uf=getSigla(d);const v=ufMap[uf]?.customers||0;return v/max>0.4?'#fff':(dark?'#9fa8da':'#334155');})
-    .text(d=>getSigla(d));
-}
-
-function renderMapFat(states){
-  if(!GEO_DATA) return;
-  const ufMap={};states.forEach(s=>{ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue};});
-  const vals=Object.values(ufMap).map(v=>v.revenue).filter(v=>v>0);
-  const min=vals.length?Math.min(...vals):0,max=vals.length?Math.max(...vals):1;
-  const dark=document.documentElement.getAttribute('data-theme')==='dark';
-  const faixas=calcFaixas(vals,5);
-  renderLegenda('leg-fat',faixas,min,max,dark,v=>'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)));
-  const W=460,H=400,proj=brazilProj(W,H),path=d3.geoPath().projection(proj);
-  const svg=d3.select('#svg-fat');svg.selectAll('*').remove();
-  svg.attr('viewBox',`0 0 ${W} ${H}`).style('display','block');
-  document.getElementById('ml-fat').style.display='none';
-  const g=svg.append('g');
-  g.selectAll('path').data(GEO_DATA.features).enter().append('path')
-    .attr('class','state-path').attr('d',path)
-    .attr('fill',d=>{const uf=getSigla(d);const v=ufMap[uf]?.revenue||0;return v?getHeatColor(v,min,max,dark):(dark?'#0d1117':'#f0f2f8');})
-    .attr('stroke',dark?'#2a2d3e':'#cbd5e1').attr('stroke-width','0.5')
-    .on('mouseenter',(e,d)=>{const uf=getSigla(d);const v=ufMap[uf];showTip(e,uf+(v?`: ${fmt(v.revenue)}`:''));})
-    .on('mousemove',moveTip).on('mouseleave',hideTip)
-    .on('click',(e,d)=>{
-      svg.selectAll('.state-path').classed('selected',false);
-      d3.select(e.target).classed('selected',true);
-      openDrillModal(getSigla(d),d.properties.name||getSigla(d),'faturamento',ufMap);
-    });
-  g.selectAll('text').data(GEO_DATA.features).enter().append('text')
-    .attr('transform',d=>{const c=path.centroid(d);return `translate(${c})`;})
-    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700')
-    .attr('pointer-events','none')
-    .attr('fill',d=>{const uf=getSigla(d);const v=ufMap[uf]?.revenue||0;return v/max>0.4?'#fff':(dark?'#9fa8da':'#334155');})
-    .text(d=>getSigla(d));
-}
-
-// DRILL-DOWN MUNICIPAL — idêntico ao exemplo.html: substitui mapa no card, não abre modal
-let _drillCurrentUF=null;
+function escDash(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;'); }
 
 function normalizeCity(s){
   return String(s).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
 
-function openDrillModal(uf, stateName, mode, ufMap){
-  _drillCurrentUF=uf;
+async function loadGeoData(){
+  try {
+    const r=await fetch(MAP_GEO_URL);
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    GEO_DATA=await r.json();
+  } catch(e){
+    ['ml-nf','ml-fat'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.textContent='Mapa indisponível.';
+    });
+  }
+}
 
-  // Qual SVG do Brasil corresponde a este modo
-  const svgBrId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
-  const brazilSvg = document.getElementById(svgBrId);
+function renderMapNF(states){
+  if(!GEO_DATA) return;
+  // Converter dados da API para mapa uf→{customers,revenue}
+  var ufMap={};
+  (states||[]).forEach(function(s){ ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue}; });
+
+  var valores = Object.values(ufMap).map(function(v){ return v.customers; }).filter(function(v){ return v > 0; });
+  var minC = valores.length > 0 ? Math.min.apply(null, valores) : 0;
+  var maxC = valores.length > 0 ? Math.max.apply(null, valores) : 1;
+  var dark = document.documentElement.getAttribute('data-theme')==='dark';
+
+  var faixas = calcularFaixas(valores, 5);
+  renderLegendaEx('leg-nf', faixas, minC, maxC, dark, null);
+
+  var getColor = function(value) {
+    if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
+    return getHeatColorEx(value, minC, maxC, dark);
+  };
+
+  var W=460,H=400;
+  var proj=brazilProjection(W,H);
+  var path=d3.geoPath().projection(proj);
+
+  var svg=d3.select('#svg-nf');
+  svg.selectAll('*').remove();
+  svg.attr('viewBox','0 0 '+W+' '+H).style('display','block');
+  var el=document.getElementById('ml-nf'); if(el) el.style.display='none';
+
+  var g=svg.append('g');
+  g.selectAll('path').data(GEO_DATA.features).enter().append('path')
+    .attr('class','state-path').attr('d',path)
+    .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].customers:0); })
+    .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
+    .attr('stroke-width', '0.5')
+    .on('mouseenter',function(event,d){ var uf=getSigla(d); showMapTip(event,uf+(ufMap[uf]?': '+fmtN(ufMap[uf].customers)+' clientes':'')); })
+    .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
+    .on('click',function(event,d){
+      var s=getSigla(d);
+      svg.selectAll('.state-path').classed('selected',false);
+      d3.select(this).classed('selected',true);
+      openDrillModal(s, d.properties.name||s, 'clientes');
+    });
+  g.selectAll('text').data(GEO_DATA.features).enter().append('text')
+    .attr('transform',function(d){ var c=path.centroid(d); return 'translate('+c+')'; })
+    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700').attr('pointer-events','none')
+    .attr('fill',function(d){ var s=getSigla(d),v=ufMap[s]?ufMap[s].customers:0; return v > maxC * 0.5 ? '#fff' : (dark?'#9fa8da':'#334155'); })
+    .text(function(d){ return getSigla(d); });
+}
+
+function renderMapFat(states){
+  if(!GEO_DATA) return;
+  var ufMap={};
+  (states||[]).forEach(function(s){ ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue}; });
+
+  var valores = Object.values(ufMap).map(function(v){ return v.revenue; }).filter(function(v){ return v > 0; });
+  var minF = valores.length > 0 ? Math.min.apply(null, valores) : 0;
+  var maxF = valores.length > 0 ? Math.max.apply(null, valores) : 1;
+  var dark = document.documentElement.getAttribute('data-theme')==='dark';
+
+  var faixas = calcularFaixas(valores, 5);
+  renderLegendaEx('leg-fat', faixas, minF, maxF, dark, function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); });
+
+  var getColor = function(value) {
+    if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
+    return getHeatColorEx(value, minF, maxF, dark);
+  };
+
+  var W=460,H=400;
+  var proj=brazilProjection(W,H);
+  var path=d3.geoPath().projection(proj);
+
+  var svg=d3.select('#svg-fat');
+  svg.selectAll('*').remove();
+  svg.attr('viewBox','0 0 '+W+' '+H).style('display','block');
+  var el=document.getElementById('ml-fat'); if(el) el.style.display='none';
+
+  var g=svg.append('g');
+  g.selectAll('path').data(GEO_DATA.features).enter().append('path')
+    .attr('class','state-path').attr('d',path)
+    .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].revenue:0); })
+    .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
+    .attr('stroke-width', '0.5')
+    .on('mouseenter',function(event,d){ var s=getSigla(d); showMapTip(event,s+(ufMap[s]?': '+fmt(ufMap[s].revenue):'')); })
+    .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
+    .on('click',function(event,d){
+      var s=getSigla(d);
+      svg.selectAll('.state-path').classed('selected',false);
+      d3.select(this).classed('selected',true);
+      openDrillModal(s, d.properties.name||s, 'faturamento');
+    });
+  g.selectAll('text').data(GEO_DATA.features).enter().append('text')
+    .attr('transform',function(d){ var c=path.centroid(d); return 'translate('+c+')'; })
+    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700').attr('pointer-events','none')
+    .attr('fill',function(d){ var s=getSigla(d),v=ufMap[s]?ufMap[s].revenue:0; return (v/maxF)>.4?'#fff':(dark?'#c9d1d9':'#334155'); })
+    .text(function(d){ return getSigla(d); });
+}
+
+// DRILL-DOWN — exatamente como exemplo.html
+function openDrillModal(uf, stateName, mode) {
+  _drillCurrentUF   = uf;
+  _drillCurrentMode = mode || 'clientes';
+
+  var mapId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
+  var brazilSvg = document.getElementById(mapId);
   if(!brazilSvg) return;
 
-  const mapCard = brazilSvg.closest('.map-card');
+  var mapCard = brazilSvg.closest('.map-card');
   if(!mapCard) return;
 
-  const drillId    = 'drill-'+mode;
-  const svgDrillId = 'svg-drill-'+mode;
-  const loadingId  = 'drillLoading-'+mode;
-  const titleId    = 'drillTitle-'+mode;
-  const subId      = 'drillSub-'+mode;
+  var drillId    = 'drill-' + mode;
+  var svgDrillId = 'svg-map-drill-' + mode;
+  var loadingId  = 'drillLoading-' + mode;
+  var titleId    = 'drillTitle-' + mode;
+  var subId      = 'drillSub-' + mode;
 
-  // Criar container de drill se não existir ainda
-  let drillContainer = document.getElementById(drillId);
+  var drillContainer = mapCard.querySelector('.drill-container[id="'+drillId+'"]');
   if(!drillContainer){
     drillContainer = document.createElement('div');
+    drillContainer.className = 'drill-container';
     drillContainer.id = drillId;
     drillContainer.style.display = 'none';
     drillContainer.innerHTML =
-      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">'+
-        '<button class="drill-back" onclick="closeDrill(\''+mode+'\')">← Voltar ao Brasil</button>'+
-        '<div style="flex:1">'+
-          '<div style="font-size:.82rem;font-weight:700" id="'+titleId+'"></div>'+
-          '<div style="font-size:.7rem;color:var(--tm)" id="'+subId+'"></div>'+
-        '</div>'+
-      '</div>'+
-      '<div class="map-loading" id="'+loadingId+'">⏳ Carregando mapa municipal...</div>'+
-      '<div class="map-svg-wrap" style="min-height:340px">'+
-        '<svg id="'+svgDrillId+'" viewBox="0 0 500 450" style="width:100%;height:100%;display:none"></svg>'+
-      '</div>'+
-      '<div class="legend-row" id="drill-leg-'+mode+'" style="margin-top:6px;justify-content:center"></div>'+
-      '<div class="drill-city-footer" id="drill-cities-'+mode+'" style="margin-top:10px"></div>';
+      '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">' +
+      '<button class="drill-back-btn" onclick="closeDrillModalByMode(\''+mode+'\')">← Voltar ao Brasil</button>' +
+      '<div style="flex:1;min-width:200px"><div class="drill-modal-title" id="'+titleId+'">Estado</div>' +
+      '<div class="drill-modal-sub" id="'+subId+'"></div></div></div>' +
+      '<div class="drill-loading" id="'+loadingId+'">⏳ Carregando mapa municipal...</div>' +
+      '<div class="map-svg-wrap"><svg id="'+svgDrillId+'" viewBox="0 0 500 450" style="width:100%;height:100%;display:none"></svg></div>' +
+      '<div class="legend-row" id="drill-legend-'+mode+'" style="margin-top:8px;justify-content:center"></div>';
     mapCard.appendChild(drillContainer);
   }
 
-  // Esconde o mapa Brasil, mostra o drill
-  brazilSvg.closest('.map-svg-wrap').style.display='none';
-  const mlEl = mapCard.querySelector('.map-loading[id^="ml-"]');
-  if(mlEl) mlEl.style.display='none';
-  drillContainer.style.display='block';
+  brazilSvg.closest('.map-svg-wrap').style.display = 'none';
+  var loadingEl = mapCard.querySelector('[id^="ml-"]');
+  if(loadingEl) loadingEl.style.display = 'none';
+  drillContainer.style.display = 'block';
 
-  document.getElementById(titleId).textContent = stateName+' — Municípios';
+  document.getElementById(titleId).textContent = stateName + ' — Municípios';
   document.getElementById(subId).textContent   = 'Carregando...';
-  document.getElementById(loadingId).style.display = 'flex';
+  document.getElementById(loadingId).style.display = 'block';
   document.getElementById(svgDrillId).style.display = 'none';
 
-  const ibgeCode = UF_IBGE[uf];
-  if(!ibgeCode){
-    document.getElementById(loadingId).textContent='Estado sem código IBGE.';
-    return;
-  }
+  var code = UF_IBGE_CODES[uf];
+  if(!code){ document.getElementById(loadingId).textContent = 'Estado não disponível.'; return; }
 
-  if(DRILL_CACHE[uf]){
-    renderDrillMap(DRILL_CACHE[uf], uf, stateName, mode, ufMap);
-    return;
-  }
+  if(_drillGeoCache[uf]){ renderDrillMap(_drillGeoCache[uf], uf, stateName, mode); return; }
 
-  const url=`https://servicodados.ibge.gov.br/api/v3/malhas/estados/${ibgeCode}?formato=application/vnd.geo+json&qualidade=minima&divisao=municipio`;
+  var url = 'https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-' + code + '-mun.json';
   fetch(url)
-    .then(r=>r.json())
-    .then(geo=>{ DRILL_CACHE[uf]=geo; renderDrillMap(geo, uf, stateName, mode, ufMap); })
-    .catch(()=>{ document.getElementById(loadingId).textContent='Não foi possível carregar o mapa municipal.'; });
+    .then(function(r){ return r.json(); })
+    .then(function(geo){ _drillGeoCache[uf]=geo; renderDrillMap(geo, uf, stateName, mode); })
+    .catch(function(){ document.getElementById(loadingId).textContent='Não foi possível carregar o mapa municipal.'; });
 }
 
-async function renderDrillMap(geo, uf, stateName, mode, ufMap){
-  const dark = document.documentElement.getAttribute('data-theme')==='dark';
-  const svgDrillId = 'svg-drill-'+mode;
-  const loadingId  = 'drillLoading-'+mode;
-  const subId      = 'drillSub-'+mode;
+function renderDrillMap(geo, uf, stateName, mode) {
+  var dark = document.documentElement.getAttribute('data-theme')==='dark';
+  var svgDrillId = 'svg-map-drill-' + mode;
+  var loadingId  = 'drillLoading-' + mode;
+  var subId      = 'drillSub-' + mode;
 
-  // Buscar cidades via API
-  const s=document.getElementById('d-s').value, e=document.getElementById('d-e').value;
-  let cities=[];
-  try{
-    const res=await api(`/geolocation/cities?startDate=${s}&endDate=${e}&businessUnit=${dBU}&states=${uf}`);
-    cities=res.cities||[];
-  }catch(err){ console.warn('cities api error', err); }
+  var s=document.getElementById('d-s').value, e=document.getElementById('d-e').value;
 
-  // Mapear cidade normalizada → dados
-  const cityData={};
-  cities.forEach(c=>{
-    const key=normalizeCity(c.city);
-    cityData[key]={customers:c.customerCount, revenue:c.totalRevenue};
-  });
+  api('/geolocation/cities?startDate='+s+'&endDate='+e+'&businessUnit='+dBU+'&states='+uf)
+    .then(function(res){
+      var cities = res.cities||[];
 
-  document.getElementById(subId).textContent=`${cities.length} cidade${cities.length!==1?'s':''} encontrada${cities.length!==1?'s':''}`;
+      // Mapear cidade normalizada → dados
+      var cityData={};
+      cities.forEach(function(c){
+        var key=normalizeCity(c.city);
+        cityData[key]={customers:c.customerCount, revenue:c.totalRevenue};
+      });
 
-  // Escala de cores
-  const vals = cities.map(c=>mode==='faturamento'?c.totalRevenue:c.customerCount).filter(v=>v>0);
-  const minV = vals.length?Math.min(...vals):0;
-  const maxV = vals.length?Math.max(...vals):1;
-  const faixas = calcFaixas(vals, 5);
-  renderLegenda('drill-leg-'+mode, faixas, minV, maxV, dark,
-    mode==='faturamento'?(v=>'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0))):null);
+      document.getElementById(subId).textContent = cities.length + ' cidade' + (cities.length!==1?'s':'') + ' encontrada' + (cities.length!==1?'s':'');
 
-  const W=500, H=450;
-  const proj2=d3.geoMercator().fitSize([W-20,H-20],{type:'FeatureCollection',features:geo.features});
-  const t2=proj2.translate(); proj2.translate([t2[0]+10, t2[1]+10]);
-  const path2=d3.geoPath().projection(proj2);
+      var useVal = mode==='faturamento';
+      var valores = cities.map(function(c){ return useVal?c.totalRevenue:c.customerCount; }).filter(function(v){ return v>0; });
+      var minVal = valores.length>0?Math.min.apply(null,valores):0;
+      var maxVal = valores.length>0?Math.max.apply(null,valores):1;
 
-  const svg2=d3.select('#'+svgDrillId);
-  svg2.selectAll('*').remove();
-  svg2.attr('viewBox',`0 0 ${W} ${H}`).style('display','block');
-  document.getElementById(loadingId).style.display='none';
+      var faixas = calcularFaixas(valores, 5);
+      var formatFn = useVal ? function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); } : null;
+      renderLegendaEx('drill-legend-'+mode, faixas, minVal, maxVal, dark, formatFn);
 
-  const g2=svg2.append('g');
-  g2.selectAll('path').data(geo.features).enter().append('path')
-    .attr('class',feat=>{
-      const key=normalizeCity(feat.properties.name||'');
-      return 'mun-path'+(cityData[key]?' has-data':'');
+      var getColor = function(value) {
+        if (!value || value === 0) return dark ? '#161922' : '#edf2f7';
+        return getHeatColorEx(value, minVal, maxVal, dark);
+      };
+
+      var svgEl = document.getElementById(svgDrillId);
+      var W=500, H=450;
+      var proj = d3.geoMercator().fitSize([W-20,H-20],{type:'FeatureCollection',features:geo.features});
+      var t = proj.translate(); proj.translate([t[0]+10,t[1]+10]);
+      var path = d3.geoPath().projection(proj);
+
+      var svg = d3.select('#'+svgDrillId);
+      svg.selectAll('*').remove();
+      svg.attr('viewBox','0 0 '+W+' '+H);
+
+      geo.features.forEach(function(feature){
+        var munName = normalizeCity(feature.properties.name||'');
+        var cd = cityData[munName];
+        var val = cd?(useVal?cd.revenue:cd.customers):0;
+        var hasData = !!cd;
+
+        svg.append('path')
+          .datum(feature)
+          .attr('class','mun-path'+(hasData?' has-data':''))
+          .attr('d',path)
+          .attr('fill', hasData ? getColor(val) : (dark?'#161922':'#edf2f7'))
+          .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
+          .attr('stroke-width', '0.4')
+          .attr('opacity', hasData ? 1 : 0.5)
+          .on('mouseenter',function(event){
+            var label = feature.properties.name||'';
+            if(hasData){ showMapTip(event, label+': '+fmtN(cd.customers)+' clientes / '+fmt(cd.revenue)); }
+            else        { showMapTip(event, label+': Sem dados'); }
+          })
+          .on('mousemove',moveMapTip)
+          .on('mouseleave',hideMapTip);
+      });
+
+      // Rodapé de cidades
+      var drillContainer = svgEl.closest('.drill-container');
+      var cityListEl = drillContainer.querySelector('.drill-city-footer');
+      if(!cityListEl){
+        cityListEl = document.createElement('div');
+        cityListEl.className = 'drill-city-footer';
+        drillContainer.appendChild(cityListEl);
+      }
+      var sorted = cities.slice().sort(function(a,b){ return useVal?b.totalRevenue-a.totalRevenue:b.customerCount-a.customerCount; });
+      var maxCity = sorted.length ? (useVal?sorted[0].totalRevenue:sorted[0].customerCount) : 1;
+      cityListEl.innerHTML = '<div class="drill-footer-title">📍 Cidades ('+sorted.length+')</div>' +
+        '<div class="drill-city-grid">' +
+        sorted.map(function(city){
+          var n=city.customerCount, v=city.totalRevenue;
+          var val2=useVal?v:n;
+          var pct=(val2/maxCity)*100;
+          return '<div class="drill-city-item" title="'+n+' clientes — '+fmt(v)+'">' +
+            '<span class="drill-city-name">'+escDash(city.city)+'</span>' +
+            '<div class="drill-city-stats">' +
+            '<span class="drill-city-count">'+fmtN(n)+' cli.</span>' +
+            '<span class="drill-city-value">'+fmt(v)+'</span>' +
+            '</div>' +
+            '<div class="drill-city-bar"><div class="drill-city-bar-fill" style="width:'+pct.toFixed(1)+'%"></div></div>' +
+            '</div>';
+        }).join('') + '</div>';
+
+      document.getElementById(loadingId).style.display = 'none';
+      svgEl.style.display = 'block';
+      svgEl.closest('.map-svg-wrap').style.display = 'block';
     })
-    .attr('d',path2)
-    .attr('fill',feat=>{
-      const key=normalizeCity(feat.properties.name||'');
-      const v=cityData[key]?(mode==='faturamento'?cityData[key].revenue:cityData[key].customers):0;
-      return v?getHeatColor(v,minV,maxV,dark):(dark?'#161922':'#edf2f7');
-    })
-    .attr('stroke',dark?'#2a2d3e':'#cbd5e1').attr('stroke-width','0.4')
-    .attr('opacity',feat=>{ const key=normalizeCity(feat.properties.name||''); return cityData[key]?1:0.5; })
-    .on('mouseenter',(ev,feat)=>{
-      const nm=feat.properties.name||'';
-      const key=normalizeCity(nm);
-      const v=cityData[key];
-      showTip(ev, nm+(v?`: ${fmtN(v.customers)} clientes / ${fmt(v.revenue)}`:''));
-    })
-    .on('mousemove',moveTip).on('mouseleave',hideTip);
-
-  // Lista de cidades no rodapé
-  const sorted=[...cities].sort((a,b)=>(mode==='faturamento'?b.totalRevenue-a.totalRevenue:b.customerCount-a.customerCount));
-  const maxVal=mode==='faturamento'?Math.max.apply(null,sorted.map(function(c){return c.totalRevenue;})):Math.max.apply(null,sorted.map(function(c){return c.customerCount;}));
-  const maxValSafe=maxVal>0?maxVal:1;
-
-  document.getElementById('drill-cities-'+mode).innerHTML =
-    `<div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm);margin-bottom:6px">📍 Cidades (${sorted.length})</div>`+
-    `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">`+
-    sorted.map(c=>{
-      const v=mode==='faturamento'?c.totalRevenue:c.customerCount;
-      const pct=((v/maxValSafe)*100).toFixed(1);
-      return `<div style="padding:6px 8px;background:var(--bgc);border:1px solid var(--bdr);border-radius:var(--rs)">
-        <div style="font-size:.75rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.city}</div>
-        <div style="display:flex;justify-content:space-between;font-size:.68rem;margin:2px 0">
-          <span style="color:var(--tm)">${fmtN(c.customerCount)} cli.</span>
-          <span style="color:var(--ok)">${fmt(c.totalRevenue)}</span>
-        </div>
-        <div style="height:3px;background:var(--bdr);border-radius:2px;overflow:hidden">
-          <div style="height:100%;background:var(--ac);width:${pct}%;border-radius:2px;transition:width .4s"></div>
-        </div>
-      </div>`;
-    }).join('')+`</div>`;
+    .catch(function(err){
+      document.getElementById(loadingId).textContent = 'Erro: '+err.message;
+    });
 }
 
-function closeDrill(mode){
-  const svgBrId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
-  const brazilSvg = document.getElementById(svgBrId);
+function closeDrillModalByMode(mode){
+  var mapId = mode==='faturamento' ? 'svg-fat' : 'svg-nf';
+  var brazilSvg = document.getElementById(mapId);
   if(!brazilSvg) return;
-  const mapCard = brazilSvg.closest('.map-card');
+  var mapCard = brazilSvg.closest('.map-card');
   if(!mapCard) return;
-
-  // Esconde drill, mostra mapa Brasil
-  const drillContainer = document.getElementById('drill-'+mode);
-  if(drillContainer) drillContainer.style.display='none';
-  brazilSvg.closest('.map-svg-wrap').style.display='block';
-
-  // Deseleciona estado
-  d3.select('#'+svgBrId).selectAll('.state-path').classed('selected',false);
-  _drillCurrentUF=null;
+  var drillContainer = document.getElementById('drill-'+mode);
+  if(drillContainer) drillContainer.style.display = 'none';
+  var mapWrap = brazilSvg.closest('.map-svg-wrap');
+  if(mapWrap) mapWrap.style.display = 'block';
+  d3.select('#'+mapId).selectAll('.state-path').classed('selected',false);
+  if(_drillCurrentMode===mode) _drillCurrentUF=null;
 }
+
 
 // ══════════════════════════════════════════════════════════════
 // CLIENTES — tabela com filtros por coluna
