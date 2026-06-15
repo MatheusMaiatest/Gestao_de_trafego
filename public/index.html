@@ -187,3 +187,288 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
 @media(max-width:900px){.maps-row,.charts-row{grid-template-columns:1fr}.chart-card.wide{grid-column:1}}
 @media(max-width:768px){.section-with-sidebar{flex-direction:column}.sidebar{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--bdr)}.kpi-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
+</head>
+<body>
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="brand">📊 <span>Intel</span>Comercial</div>
+  <nav class="tabs">
+    <button class="tab active" onclick="showTab('dashboard',this)">📈 Dashboard</button>
+    <button class="tab" onclick="showTab('clientes',this)">👥 Clientes</button>
+    <button class="tab" onclick="showTab('relatorios',this)">📄 Relatórios</button>
+    <button class="tab" onclick="showTab('disparo',this)">📱 Disparo</button>
+  </nav>
+  <button class="theme-btn" onclick="toggleTheme()" title="Tema">🌙</button>
+</div>
+
+<!-- ═══════ DASHBOARD ════════════════════════════════════════ -->
+<div id="tab-dashboard" class="section active">
+  <div class="content">
+    <div class="filter-bar">
+      <div class="fg"><label>Início</label><input type="date" id="d-s"/></div>
+      <div class="fg"><label>Fim</label><input type="date" id="d-e"/></div>
+      <div class="fg"><label>Unidade</label>
+        <div class="btn-group">
+          <button class="ubtn active" data-bu="all" onclick="setBU('d',this)">Todos</button>
+          <button class="ubtn eco"  data-bu="ecommerce" onclick="setBU('d',this)">E-commerce</button>
+          <button class="ubtn dist" data-bu="distributor" onclick="setBU('d',this)">Distribuidor</button>
+        </div>
+      </div>
+      <button class="btn-search" onclick="loadDash()">🔍 Buscar</button>
+    </div>
+    <div class="kpi-grid" id="d-kpis"></div>
+    <div class="charts-row">
+      <div class="chart-card" onclick="openChartModal('rfm')">
+        <div class="chart-title"><span>🎯</span>Distribuição RFM</div>
+        <div class="chart-wrap"><canvas id="ch-rfm"></canvas></div>
+      </div>
+      <div class="chart-card" onclick="openChartModal('seg')">
+        <div class="chart-title"><span>👥</span>Segmentos</div>
+        <div class="chart-wrap"><canvas id="ch-seg"></canvas></div>
+      </div>
+      <div class="chart-card wide" onclick="openChartModal('prod')">
+        <div class="chart-title"><span>📦</span>Top 10 Produtos Mais Vendidos</div>
+        <div class="chart-wrap"><canvas id="ch-prod"></canvas></div>
+      </div>
+    </div>
+    <!-- MAPAS D3 -->
+    <div class="maps-row">
+      <div class="map-card" id="mc-left">
+        <div class="map-card-title"><span>🗺️</span>Clientes por Estado</div>
+        <div class="legend-row" id="leg-nf"></div>
+        <div class="map-svg-wrap" style="position:relative">
+          <div class="map-loading" id="ml-nf">Carregando mapa...</div>
+          <svg id="svg-nf" viewBox="0 0 460 420" style="display:none"></svg>
+        </div>
+      </div>
+      <div class="map-card" id="mc-right">
+        <div class="map-card-title"><span>💰</span>Faturamento por Estado</div>
+        <div class="legend-row" id="leg-fat"></div>
+        <div class="map-svg-wrap" style="position:relative">
+          <div class="map-loading" id="ml-fat">Carregando mapa...</div>
+          <svg id="svg-fat" viewBox="0 0 460 420" style="display:none"></svg>
+        </div>
+      </div>
+    </div>
+    <div class="map-tooltip" id="map-tooltip"></div>
+  </div>
+</div>
+
+<!-- ═══════ CLIENTES ═════════════════════════════════════════ -->
+<div id="tab-clientes" class="section">
+  <div class="content">
+    <div id="c-kpis" class="kpi-grid" style="display:none"></div>
+    <div class="filter-bar">
+      <div class="fg"><label>Início</label><input type="date" id="c-s"/></div>
+      <div class="fg"><label>Fim</label><input type="date" id="c-e"/></div>
+      <div class="fg"><label>Unidade</label>
+        <div class="btn-group">
+          <button class="ubtn active" data-bu="all" onclick="setBU('c',this)">Todos</button>
+          <button class="ubtn eco"  data-bu="ecommerce" onclick="setBU('c',this)">E-com</button>
+          <button class="ubtn dist" data-bu="distributor" onclick="setBU('c',this)">Dist</button>
+        </div>
+      </div>
+      <div class="fg"><label>Segmento</label>
+        <select id="c-seg" class="sf-select" style="min-width:130px">
+          <option value="">Todos</option>
+          <option value="vip">VIP</option>
+          <option value="recorrente">Recorrente</option>
+          <option value="novo">Novo</option>
+          <option value="inativo">Inativo</option>
+          <option value="em_risco">Em Risco</option>
+        </select>
+      </div>
+      <button class="btn-search" onclick="loadClientes()">🔍 Buscar</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <input type="text" id="c-search" class="search-input" placeholder="Buscar por nome, CPF ou nº pedido..."/>
+      <span id="c-count" style="font-size:.72rem;color:var(--tm);margin-left:auto"></span>
+    </div>
+    <div class="table-wrap" id="c-table-wrap">
+      <table id="c-table">
+        <thead id="c-thead"></thead>
+        <tbody id="c-tbody">
+          <tr><td colspan="12"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="c-pag"></div>
+  </div>
+</div>
+
+<!-- ═══════ RELATÓRIOS ═══════════════════════════════════════ -->
+<div id="tab-relatorios" class="section-with-sidebar">
+  <div class="sidebar">
+    <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--tm)">⚙️ Configurar</div>
+    <div class="sf-sec">
+      <label class="sf-label">Período</label>
+      <input type="date" id="r-s" class="sf-input"/>
+      <input type="date" id="r-e" class="sf-input" style="margin-top:5px"/>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Unidade</label>
+      <select id="r-bu" class="sf-select">
+        <option value="all">Todas</option>
+        <option value="ecommerce">E-commerce</option>
+        <option value="distributor">Distribuidor</option>
+      </select>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Segmento</label>
+      <select id="r-seg" class="sf-select">
+        <option value="">Todos</option>
+        <option value="vip">VIP</option>
+        <option value="recorrente">Recorrente</option>
+        <option value="novo">Novos</option>
+        <option value="inativo">Inativos</option>
+        <option value="em_risco">Em Risco</option>
+      </select>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Estado (UF)</label>
+      <select id="r-uf" class="sf-select" onchange="loadCities()">
+        <option value="">Todos</option>
+        <option>AC</option><option>AL</option><option>AM</option><option>AP</option>
+        <option>BA</option><option>CE</option><option>DF</option><option>ES</option>
+        <option>GO</option><option>MA</option><option>MG</option><option>MS</option>
+        <option>MT</option><option>PA</option><option>PB</option><option>PE</option>
+        <option>PI</option><option>PR</option><option>RJ</option><option>RN</option>
+        <option>RO</option><option>RR</option><option>RS</option><option>SC</option>
+        <option>SE</option><option>SP</option><option>TO</option>
+      </select>
+      <label class="sf-label" style="margin-top:7px">Cidade</label>
+      <select id="r-city" class="sf-select" disabled>
+        <option value="">Todas</option>
+      </select>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Faixa de Ticket</label>
+      <select id="r-ticket" class="sf-select">
+        <option value="">Todas</option>
+        <option value="0-100">Até R$ 100</option>
+        <option value="100-500">R$ 100 – R$ 500</option>
+        <option value="500-1000">R$ 500 – R$ 1.000</option>
+        <option value="1000+">Acima R$ 1.000</option>
+      </select>
+    </div>
+  </div>
+  <div class="content">
+    <div id="r-kpis" class="kpi-grid" style="display:none"></div>
+    <div class="rpt-grid">
+      <div class="rpt-group">📣 AUDIÊNCIAS PARA ADS</div>
+      <div class="rpt-card" onclick="previewRpt('meta')"><div class="rpt-icon">📘</div><div class="rpt-name">Meta Ads</div><div class="rpt-desc">email, phone, fn, ln</div></div>
+      <div class="rpt-card" onclick="previewRpt('google')"><div class="rpt-icon">🔵</div><div class="rpt-name">Google Ads</div><div class="rpt-desc">Email, Phone, First Name, Last Name</div></div>
+      <div class="rpt-card" onclick="previewRpt('tiktok')"><div class="rpt-icon">🎵</div><div class="rpt-name">TikTok Ads</div><div class="rpt-desc">email, phone_number</div></div>
+      <div class="rpt-card" onclick="previewRpt('linkedin')"><div class="rpt-icon">💼</div><div class="rpt-name">LinkedIn Ads</div><div class="rpt-desc">email, firstName, lastName</div></div>
+      <div class="rpt-card" onclick="previewRpt('pinterest')"><div class="rpt-icon">📌</div><div class="rpt-name">Pinterest Ads</div><div class="rpt-desc">email</div></div>
+      <div class="rpt-card" onclick="previewRpt('twitter')"><div class="rpt-icon">🐦</div><div class="rpt-name">X Ads</div><div class="rpt-desc">email</div></div>
+      <div class="rpt-card" onclick="previewRpt('kwai')"><div class="rpt-icon">🎬</div><div class="rpt-name">Kwai for Business</div><div class="rpt-desc">phone</div></div>
+      <div class="rpt-group" style="margin-top:4px">📊 RELATÓRIOS ESTRATÉGICOS</div>
+      <div class="rpt-card" onclick="previewRpt('completo')"><div class="rpt-icon">👥</div><div class="rpt-name">Clientes Completo</div><div class="rpt-desc">Todos os dados</div></div>
+      <div class="rpt-card" onclick="previewRpt('top')"><div class="rpt-icon">🏆</div><div class="rpt-name">Top Clientes</div><div class="rpt-desc">Ranking por valor</div></div>
+      <div class="rpt-card" onclick="previewRpt('inativos')"><div class="rpt-icon">😴</div><div class="rpt-name">Inativos</div><div class="rpt-desc">+90 dias sem comprar</div></div>
+      <div class="rpt-card" onclick="previewRpt('rfm')"><div class="rpt-icon">🎯</div><div class="rpt-name">Análise RFM</div><div class="rpt-desc">Scores e segmento</div></div>
+      <div class="rpt-card" onclick="previewRpt('produtos')"><div class="rpt-icon">📦</div><div class="rpt-name">Produtos</div><div class="rpt-desc">Mais vendidos</div></div>
+      <div class="rpt-card" onclick="previewRpt('geo')"><div class="rpt-icon">🗺️</div><div class="rpt-name">Geo por Estado</div><div class="rpt-desc">Distribuição</div></div>
+    </div>
+    <div id="preview-area" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ═══════ DISPARO ══════════════════════════════════════════ -->
+<div id="tab-disparo" class="section-with-sidebar">
+  <div class="sidebar">
+    <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--tm)">🎯 Oportunidades</div>
+    <div class="sf-sec">
+      <label class="sf-label">Período</label>
+      <input type="date" id="dm-s" class="sf-input"/>
+      <input type="date" id="dm-e" class="sf-input" style="margin-top:5px"/>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Segmento</label>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;cursor:pointer"><input type="radio" name="dm-seg" value="inativo" checked style="accent-color:var(--err)"><span style="color:var(--err)">😴 Inativos (+90d)</span></label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;cursor:pointer"><input type="radio" name="dm-seg" value="em_risco" style="accent-color:var(--warn)"><span style="color:var(--warn)">⚠️ Em Risco</span></label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;cursor:pointer"><input type="radio" name="dm-seg" value="vip" style="accent-color:#ffc107"><span style="color:#ffc107">⭐ VIP</span></label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;cursor:pointer"><input type="radio" name="dm-seg" value="recorrente" style="accent-color:var(--ac)"><span style="color:var(--ach)">🔄 Recorrentes</span></label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:.8rem;cursor:pointer"><input type="radio" name="dm-seg" value="novo" style="accent-color:var(--ok)"><span style="color:var(--ok)">✨ Novos</span></label>
+      </div>
+    </div>
+    <div class="sf-sec">
+      <label class="sf-label">Unidade</label>
+      <select id="dm-bu" class="sf-select"><option value="all">Todas</option><option value="ecommerce">E-commerce</option><option value="distributor">Distribuidor</option></select>
+    </div>
+    <button class="btn-apply" onclick="loadDisparo()">🔍 Identificar</button>
+    <div id="dm-cnt" style="font-size:.7rem;color:var(--tm);text-align:center;margin-top:4px"></div>
+  </div>
+  <div class="content">
+    <div id="dm-kpis" class="kpi-grid" style="display:none"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Nome</th><th>Unidade</th><th>Cidade/UF</th>
+          <th>Última Compra</th><th>Dias Sem Comprar</th>
+          <th>Pedidos</th><th>Total Gasto</th><th>Ticket Médio</th>
+          <th>Oportunidade</th><th>WhatsApp</th>
+        </tr></thead>
+        <tbody id="dm-tbody">
+          <tr><td colspan="10"><div class="empty-state"><div class="icon">🎯</div><p>Selecione um segmento e clique em Identificar</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="dm-pag"></div>
+  </div>
+</div>
+
+<!-- MODAIS -->
+<div class="overlay" id="ov-cliente">
+  <div class="modal" id="ov-cliente-m">
+    <button class="modal-close" onclick="closeOv('ov-cliente')">✕</button>
+    <div class="modal-head"><h2 id="mc-name">-</h2><div class="modal-sub" id="mc-sub"></div></div>
+    <div class="modal-body">
+      <div class="info-grid" id="mc-info"></div>
+      <div class="sec-title">📋 Histórico de Pedidos</div>
+      <div class="order-list" id="mc-orders"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-pedido">
+  <div class="modal" id="ov-pedido-m">
+    <button class="modal-close" onclick="closeOv('ov-pedido')">✕</button>
+    <div class="modal-head"><h2 id="mp-title">-</h2><div class="modal-sub" id="mp-sub"></div></div>
+    <div class="modal-body" id="mp-body"></div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-chart">
+  <div class="modal wide">
+    <button class="modal-close" onclick="closeOv('ov-chart')">✕</button>
+    <div class="modal-head"><h2 id="mch-title">-</h2><div class="modal-sub" id="mch-sub"></div></div>
+    <div class="modal-body">
+      <div style="height:280px"><canvas id="mch-canvas"></canvas></div>
+      <div id="mch-table"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ov-drill">
+  <div class="modal wide">
+    <button class="modal-close" onclick="closeOv('ov-drill')">✕</button>
+    <div class="modal-head"><h2 id="md-title">-</h2><div class="modal-sub" id="md-sub"></div></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 260px;gap:0">
+        <div style="border-right:1px solid var(--bdr);padding-right:14px">
+          <div id="md-map-wrap" style="height:400px;position:relative">
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--tm);font-size:.8rem" id="md-loading">Carregando...</div>
+            <svg id="md-svg" viewBox="0 0 500 450" style="width:100%;height:100%;display:none"></svg>
+          </div>
+        </div>
+        <div style="padding-left:14px;overflow-y:auto;max-height:420px;display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm)">Top Cidades</div>
+          <div id="md-cities"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
