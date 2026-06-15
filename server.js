@@ -740,27 +740,49 @@ app.get('/api/products/top-selling', async (req, res) => {
 });
 
 // ── GEOLOCALIZAÇÃO ────────────────────────────────────────────
+// Mapeamento nome completo → sigla para normalização do estado
+const UF_NORM = {
+  'acre':'AC','alagoas':'AL','amapa':'AP','amazonas':'AM','bahia':'BA',
+  'ceara':'CE','distritofederal':'DF','espiritosanto':'ES','goias':'GO',
+  'maranhao':'MA','matogrosso':'MT','matogrossodosul':'MS','minasgerais':'MG',
+  'para':'PA','paraiba':'PB','parana':'PR','pernambuco':'PE','piaui':'PI',
+  'riodejaneiro':'RJ','riograndedonorte':'RN','riograndedosul':'RS',
+  'rondonia':'RO','roraima':'RR','santacatarina':'SC','saopaulo':'SP',
+  'sergipe':'SE','tocantins':'TO'
+};
+function normalizeUF(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (s.length === 2) return s.toUpperCase();
+  // Tentar pelo nome normalizado
+  const key = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,'');
+  return UF_NORM[key] || s.toUpperCase().slice(-2) || null;
+}
+
 app.get('/api/geolocation/states', async (req, res) => {
   const { startDate, endDate, businessUnit:bu='all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   try {
     const conn = await pool.getConnection();
+    // Usa COALESCE para pegar a sigla de transporte_etiqueta_uf (mais confiável) ou kdd_cliente_estado
     const union = unionSQL(bu,
-      `kdd_cliente_estado AS state,
+      `COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) AS state,
        COUNT(DISTINCT contato_id) AS customers,
        COALESCE(SUM(total),0) AS revenue,
        COUNT(*) AS orders`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'
-       AND kdd_cliente_estado IS NOT NULL AND kdd_cliente_estado != ''
-       GROUP BY kdd_cliente_estado`);
+       AND COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) IS NOT NULL
+       GROUP BY state`);
 
     const [rows] = await conn.execute(`SELECT * FROM (${union}) t`);
     conn.release();
 
     const map = new Map();
     rows.forEach(r => {
-      if (!map.has(r.state)) map.set(r.state, { location:r.state, customerCount:0, totalRevenue:0, orderCount:0 });
-      const ex = map.get(r.state);
+      const uf = normalizeUF(r.state);
+      if (!uf) return;
+      if (!map.has(uf)) map.set(uf, { location:uf, customerCount:0, totalRevenue:0, orderCount:0 });
+      const ex = map.get(uf);
       ex.customerCount += parseInt(r.customers)||0;
       ex.totalRevenue  += parseFloat(r.revenue)||0;
       ex.orderCount    += parseInt(r.orders)||0;
@@ -781,30 +803,35 @@ app.get('/api/geolocation/cities', async (req, res) => {
   const { startDate, endDate, businessUnit:bu='all', states } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
 
-  const stateFilter = states
-    ? `AND kdd_cliente_estado IN ('${states.split(',').map(s=>s.trim().replace(/'/g,"''")).join("','")}')`
+  // Aceita tanto sigla (SP) quanto nome completo — normaliza para sigla
+  const stateList = states ? states.split(',').map(s => normalizeUF(s.trim())).filter(Boolean) : [];
+  const stateFilter = stateList.length
+    ? `AND COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) IN ('${stateList.join("','")}')`
     : '';
 
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `transporte_etiqueta_municipio AS city,
-       kdd_cliente_estado AS state,
+      `TRIM(transporte_etiqueta_municipio) AS city,
+       COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) AS state,
        COUNT(DISTINCT contato_id) AS customers,
        COALESCE(SUM(total),0) AS revenue,
        COUNT(*) AS orders`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'
        AND transporte_etiqueta_municipio IS NOT NULL
        AND transporte_etiqueta_municipio != ''
-       ${stateFilter} GROUP BY transporte_etiqueta_municipio, kdd_cliente_estado`);
+       ${stateFilter} GROUP BY city, state`);
 
-    const [rows] = await conn.execute(`SELECT * FROM (${union}) t`);
+    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE city IS NOT NULL AND city != ''`);
     conn.release();
 
     const map = new Map();
     rows.forEach(r => {
-      const k = `${r.city}/${r.state}`;
-      if (!map.has(k)) map.set(k, { location:k, city:r.city, state:r.state, customerCount:0, totalRevenue:0, orderCount:0 });
+      const uf = normalizeUF(r.state);
+      const city = (r.city||'').trim();
+      if (!city) return;
+      const k = `${city}/${uf||''}`;
+      if (!map.has(k)) map.set(k, { location:k, city, state:uf||r.state||'', customerCount:0, totalRevenue:0, orderCount:0 });
       const ex = map.get(k);
       ex.customerCount += parseInt(r.customers)||0;
       ex.totalRevenue  += parseFloat(r.revenue)||0;
