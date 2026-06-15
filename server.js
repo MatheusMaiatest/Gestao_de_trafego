@@ -35,21 +35,46 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
 app.use(compression());
 app.use(express.json());
+
+// Servir static ANTES das rotas API para não interferir
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Helper: WHERE clause por businessUnit ─────────────────────
-// Tabelas reais: bling_pedidos_venda_detalhes_ecommerce / _distribuicao
-// Colunas: contato_id, contato_nome, contato_numerodocumento,
-//          data (date), total (double), situacao_nome, numero,
-//          notafiscal_id, kdd_cliente_estado, transporte_etiqueta_municipio
+// ── Nomes que NÃO são clientes reais (unidades de venda) ───────
+const NOT_CLIENTS = [
+  'loja fisica','loja física','e-commerce','ecommerce','distribuidor',
+  'distribuicao','distribuição','marketplace','consumidor final','pdv',
+  'online cosmeticos','online cosméticos','mercado livre'
+];
+function isNotClient(name) {
+  if (!name) return true;
+  const n = name.toLowerCase().trim();
+  return NOT_CLIENTS.some(x => n === x || n.startsWith(x + ' ') || n.includes('loja fisica') || n.includes('loja física') || n === 'ecommerce' || n === 'e-commerce');
+}
 
+// ── Helper UNION SQL ──────────────────────────────────────────
 function unionSQL(bu, cols, extra = '') {
   const eco  = `SELECT ${cols}, 'ecommerce' AS origem FROM \`bling_pedidos_venda_detalhes_ecommerce\` ${extra}`;
   const dist = `SELECT ${cols}, 'distribuicao' AS origem FROM \`bling_pedidos_venda_detalhes_distribuicao\` ${extra}`;
-  if (bu === 'ecommerce')                           return eco;
+  if (bu === 'ecommerce')                            return eco;
   if (bu === 'distributor' || bu === 'distribuidor') return dist;
   return `(${eco}) UNION ALL (${dist})`;
 }
+
+// ── Corrigir datas vindas do MySQL ────────────────────────────
+function safeDate(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d.toISOString().slice(0,10);
+  const s = String(d);
+  if (s === 'Invalid Date' || s === '0000-00-00') return null;
+  // MySQL retorna Date objects ou strings "YYYY-MM-DD"
+  const dt = new Date(s);
+  if (isNaN(dt.getTime())) return null;
+  return dt.toISOString().slice(0,10);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ROTAS API — todas começam com /api/
+// ══════════════════════════════════════════════════════════════
 
 // ── Health ────────────────────────────────────────────────────
 app.get('/health', (_req, res) =>
@@ -57,16 +82,21 @@ app.get('/health', (_req, res) =>
 
 // ── Debug ─────────────────────────────────────────────────────
 app.get('/api/debug/tables', async (_req, res) => {
-  const conn = await pool.getConnection();
-  const [r] = await conn.execute('SHOW TABLES'); conn.release(); res.json(r);
+  try {
+    const conn = await pool.getConnection();
+    const [r] = await conn.execute('SHOW TABLES'); conn.release();
+    res.json(r);
+  } catch(e) { res.status(500).json({error:e.message}); }
 });
 app.get('/api/debug/columns/:t', async (req, res) => {
-  const conn = await pool.getConnection();
-  const [r] = await conn.execute(`DESCRIBE \`${req.params.t}\``);
-  conn.release(); res.json(r);
+  try {
+    const conn = await pool.getConnection();
+    const [r] = await conn.execute(`DESCRIBE \`${req.params.t}\``);
+    conn.release(); res.json(r);
+  } catch(e) { res.status(500).json({error:e.message}); }
 });
 
-// ── DASHBOARD KPIs — 1 query via UNION ALL ────────────────────
+// ── DASHBOARD KPIs ────────────────────────────────────────────
 app.get('/api/dashboard/kpis', async (req, res) => {
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
@@ -74,49 +104,47 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const conn = await pool.getConnection();
 
     const union = unionSQL(bu,
-      `contato_id, total, data`,
+      `contato_id, contato_nome, total, data`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'`);
 
-    // Tudo em 1 query só
     const [[kpi]] = await conn.execute(`
-      SELECT
-        COUNT(*)                                          AS totalOrders,
-        COUNT(DISTINCT contato_id)                        AS activeClients,
-        COALESCE(SUM(total),0)                            AS totalRevenue,
-        COALESCE(AVG(total),0)                            AS averageTicket
-      FROM (${union}) t`);
+      SELECT COUNT(*) AS totalOrders,
+             COUNT(DISTINCT contato_id) AS activeClients,
+             COALESCE(SUM(total),0) AS totalRevenue,
+             COALESCE(AVG(total),0) AS averageTicket
+      FROM (${union}) t
+      WHERE contato_id IS NOT NULL`);
 
-    // Novos clientes: primeira compra no período — 1 query
-    const unionAll = unionSQL('all', `contato_id, data`, '');
+    const unionAll = unionSQL('all', `contato_id, contato_nome, data`, '');
     const [[novos]] = await conn.execute(`
       SELECT COUNT(*) AS total FROM (
         SELECT contato_id FROM (${unionAll}) t
+        WHERE contato_id IS NOT NULL
         GROUP BY contato_id
         HAVING MIN(data) BETWEEN '${startDate}' AND '${endDate}'
       ) n`);
 
-    // Inativos: sem compra nos últimos 90 dias — 1 query
     const [[inat]] = await conn.execute(`
       SELECT COUNT(DISTINCT contato_id) AS total
-      FROM (${unionSQL('all','contato_id','')}) t
-      WHERE contato_id NOT IN (
-        SELECT DISTINCT contato_id
-        FROM (${unionSQL('all','contato_id',`WHERE data >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`)}) a
-      )`);
+      FROM (${unionSQL('all','contato_id, contato_nome','')}) t
+      WHERE contato_id IS NOT NULL
+        AND contato_id NOT IN (
+          SELECT DISTINCT contato_id
+          FROM (${unionSQL('all','contato_id, contato_nome',`WHERE data >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`)}) a
+          WHERE contato_id IS NOT NULL
+        )`);
 
     conn.release();
-
     const active = parseInt(kpi.activeClients)||0;
     const orders = parseInt(kpi.totalOrders)||0;
     res.json({
       period: { startDate, endDate }, businessUnit: bu,
-      totalClients:             active,
-      activeClients:            active,
-      inactiveClients:          parseInt(inat.total)||0,
-      newClients:               parseInt(novos.total)||0,
-      totalRevenue:             parseFloat((kpi.totalRevenue||0).toFixed(2)),
-      averageTicket:            parseFloat((kpi.averageTicket||0).toFixed(2)),
-      totalOrders:              orders,
+      totalClients: active, activeClients: active,
+      inactiveClients: parseInt(inat.total)||0,
+      newClients: parseInt(novos.total)||0,
+      totalRevenue: parseFloat((kpi.totalRevenue||0).toFixed(2)),
+      averageTicket: parseFloat((kpi.averageTicket||0).toFixed(2)),
+      totalOrders: orders,
       averagePurchaseFrequency: active > 0 ? parseFloat((orders/active).toFixed(2)) : 0
     });
   } catch (err) {
@@ -125,10 +153,10 @@ app.get('/api/dashboard/kpis', async (req, res) => {
   }
 });
 
-// ── CLIENTES — 1 query UNION ALL + paginação em JS ───────────
+// ── CLIENTES ──────────────────────────────────────────────────
 app.get('/api/clients', async (req, res) => {
   const { startDate, endDate, businessUnit: bu = 'all',
-          page = 1, limit = 50, search } = req.query;
+          page = 1, limit = 500, search } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
 
   let where = `WHERE data BETWEEN '${startDate}' AND '${endDate}'`;
@@ -140,35 +168,68 @@ app.get('/api/clients', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, MAX(contato_nome) AS name,
+      `contato_id,
+       MAX(contato_nome) AS name,
        MAX(contato_numerodocumento) AS cpf,
+       MAX(contato_tipopessoa) AS tipoPessoa,
        MAX(transporte_etiqueta_municipio) AS city,
+       MAX(transporte_etiqueta_uf) AS stateUF,
        MAX(kdd_cliente_estado) AS state,
-       MIN(data) AS firstPurchaseDate, MAX(data) AS lastPurchaseDate,
+       MIN(data) AS firstPurchaseDate,
+       MAX(data) AS lastPurchaseDate,
        COUNT(*) AS totalOrders,
-       COALESCE(SUM(total),0) AS totalSpent`,
+       COALESCE(SUM(total),0) AS totalSpent,
+       COALESCE(AVG(total),0) AS averageTicket`,
       `${where} GROUP BY contato_id`);
 
     const [rows] = await conn.execute(
-      `SELECT * FROM (${union}) c ORDER BY totalSpent DESC`);
+      `SELECT * FROM (${union}) c WHERE contato_id IS NOT NULL ORDER BY totalSpent DESC`);
     conn.release();
 
-    // Deduplica contato_id entre eco + dist
     const map = new Map();
     rows.forEach(r => {
-      if (!r.contato_id) return;
-      if (!map.has(r.contato_id)) {
-        map.set(r.contato_id, { ...r, totalSpent: parseFloat(r.totalSpent) });
+      if (!r.contato_id || isNotClient(r.name)) return;
+      const key = r.contato_id;
+      if (!map.has(key)) {
+        map.set(key, {
+          id: r.contato_id,
+          name: r.name,
+          cpf: r.cpf,
+          tipoPessoa: r.tipoPessoa,
+          city: r.city || r.state,
+          state: r.stateUF || r.state,
+          businessUnit: r.origem,
+          firstPurchaseDate: safeDate(r.firstPurchaseDate),
+          lastPurchaseDate: safeDate(r.lastPurchaseDate),
+          totalOrders: parseInt(r.totalOrders)||0,
+          totalSpent: parseFloat(r.totalSpent)||0,
+          averageTicket: parseFloat(r.averageTicket)||0,
+          _origens: new Set([r.origem])
+        });
       } else {
-        const ex = map.get(r.contato_id);
-        ex.totalOrders += r.totalOrders;
-        ex.totalSpent  += parseFloat(r.totalSpent);
+        const ex = map.get(key);
+        ex.totalOrders += parseInt(r.totalOrders)||0;
+        ex.totalSpent  += parseFloat(r.totalSpent)||0;
+        ex._origens.add(r.origem);
+        // Manter data mais antiga como primeira compra
+        if (r.firstPurchaseDate && safeDate(r.firstPurchaseDate) < ex.firstPurchaseDate)
+          ex.firstPurchaseDate = safeDate(r.firstPurchaseDate);
+        // Manter data mais recente como última compra
+        if (r.lastPurchaseDate && safeDate(r.lastPurchaseDate) > ex.lastPurchaseDate)
+          ex.lastPurchaseDate = safeDate(r.lastPurchaseDate);
       }
     });
 
-    const all    = [...map.values()].sort((a,b) => b.totalSpent - a.totalSpent);
-    const lim    = parseInt(limit);
-    const off    = (parseInt(page)-1) * lim;
+    const all = [...map.values()].map(c => {
+      const bothUnits = c._origens.size > 1;
+      const bu2 = bothUnits ? 'both' : c.businessUnit;
+      delete c._origens;
+      return { ...c, businessUnit: bu2,
+               averageTicket: c.totalOrders > 0 ? parseFloat((c.totalSpent/c.totalOrders).toFixed(2)) : 0 };
+    }).sort((a,b) => b.totalSpent - a.totalSpent);
+
+    const lim = parseInt(limit);
+    const off = (parseInt(page)-1) * lim;
     res.json({ clients: all.slice(off, off+lim), total: all.length,
                page: parseInt(page), pages: Math.ceil(all.length/lim) });
   } catch (err) {
@@ -177,29 +238,215 @@ app.get('/api/clients', async (req, res) => {
   }
 });
 
-// ── SEGMENTOS — 1 query UNION ALL, cálculo em JS ─────────────
+// ── CLIENTE por ID — retorna detalhes + pedidos ───────────────
+app.get('/api/clients/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'ID obrigatório.' });
+
+  try {
+    const conn = await pool.getConnection();
+
+    // Buscar dados do cliente nas duas tabelas
+    const [rowsE] = await conn.execute(
+      `SELECT contato_id AS id, MAX(contato_nome) AS name,
+              MAX(contato_numerodocumento) AS cpf,
+              MAX(contato_tipopessoa) AS tipoPessoa,
+              MAX(transporte_etiqueta_municipio) AS city,
+              MAX(transporte_etiqueta_uf) AS stateUF,
+              MAX(transporte_etiqueta_bairro) AS bairro,
+              MAX(transporte_etiqueta_endereco) AS endereco,
+              MAX(transporte_etiqueta_cep) AS cep,
+              MIN(data) AS firstPurchaseDate,
+              MAX(data) AS lastPurchaseDate,
+              COUNT(*) AS totalOrders,
+              COALESCE(SUM(total),0) AS totalSpent
+       FROM bling_pedidos_venda_detalhes_ecommerce
+       WHERE contato_id = ?
+       GROUP BY contato_id`,
+      [id]
+    );
+
+    const [rowsD] = await conn.execute(
+      `SELECT contato_id AS id, MAX(contato_nome) AS name,
+              MAX(contato_numerodocumento) AS cpf,
+              MAX(contato_tipopessoa) AS tipoPessoa,
+              MAX(transporte_etiqueta_municipio) AS city,
+              MAX(transporte_etiqueta_uf) AS stateUF,
+              MAX(transporte_etiqueta_bairro) AS bairro,
+              MAX(transporte_etiqueta_endereco) AS endereco,
+              MAX(transporte_etiqueta_cep) AS cep,
+              MIN(data) AS firstPurchaseDate,
+              MAX(data) AS lastPurchaseDate,
+              COUNT(*) AS totalOrders,
+              COALESCE(SUM(total),0) AS totalSpent
+       FROM bling_pedidos_venda_detalhes_distribuicao
+       WHERE contato_id = ?
+       GROUP BY contato_id`,
+      [id]
+    );
+
+    if (!rowsE.length && !rowsD.length) {
+      conn.release();
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+
+    // Mesclar dados
+    const eco  = rowsE[0] || {};
+    const dist = rowsD[0] || {};
+    const both = rowsE.length > 0 && rowsD.length > 0;
+
+    const client = {
+      id,
+      name: eco.name || dist.name,
+      cpf: eco.cpf || dist.cpf,
+      tipoPessoa: eco.tipoPessoa || dist.tipoPessoa,
+      city: eco.city || dist.city,
+      state: eco.stateUF || dist.stateUF,
+      bairro: eco.bairro || dist.bairro,
+      endereco: eco.endereco || dist.endereco,
+      cep: eco.cep || dist.cep,
+      businessUnit: both ? 'both' : (rowsE.length ? 'ecommerce' : 'distribuicao'),
+      firstPurchaseDate: safeDate(
+        (!eco.firstPurchaseDate || (dist.firstPurchaseDate && dist.firstPurchaseDate < eco.firstPurchaseDate))
+          ? dist.firstPurchaseDate : eco.firstPurchaseDate
+      ),
+      lastPurchaseDate: safeDate(
+        (!eco.lastPurchaseDate || (dist.lastPurchaseDate && dist.lastPurchaseDate > eco.lastPurchaseDate))
+          ? dist.lastPurchaseDate : eco.lastPurchaseDate
+      ),
+      totalOrders: (parseInt(eco.totalOrders)||0) + (parseInt(dist.totalOrders)||0),
+      totalSpent: (parseFloat(eco.totalSpent)||0) + (parseFloat(dist.totalSpent)||0),
+    };
+    client.averageTicket = client.totalOrders > 0
+      ? parseFloat((client.totalSpent / client.totalOrders).toFixed(2)) : 0;
+
+    // Buscar pedidos (últimos 100)
+    const [pedidosE] = await conn.execute(
+      `SELECT id, numero, data, total, situacao_nome, notafiscal_id, 'ecommerce' AS origem
+       FROM bling_pedidos_venda_detalhes_ecommerce
+       WHERE contato_id = ? ORDER BY data DESC LIMIT 50`, [id]
+    );
+    const [pedidosD] = await conn.execute(
+      `SELECT id, numero, data, total, situacao_nome, notafiscal_id, 'distribuicao' AS origem
+       FROM bling_pedidos_venda_detalhes_distribuicao
+       WHERE contato_id = ? ORDER BY data DESC LIMIT 50`, [id]
+    );
+
+    const pedidos = [...pedidosE, ...pedidosD]
+      .sort((a,b) => new Date(b.data) - new Date(a.data))
+      .map(p => ({
+        id: p.id,
+        numero: p.numero,
+        data: safeDate(p.data),
+        total: parseFloat(p.total)||0,
+        situacao: p.situacao_nome,
+        origem: p.origem
+      }));
+
+    conn.release();
+    res.json({ ...client, pedidos });
+  } catch (err) {
+    logger.error('clients/:id: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PEDIDO por ID — retorna detalhes completos ────────────────
+app.get('/api/orders/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const conn = await pool.getConnection();
+
+    // Buscar nas duas tabelas
+    const [[pedE]] = await conn.execute(
+      `SELECT p.*, 'ecommerce' AS origem
+       FROM bling_pedidos_venda_detalhes_ecommerce p WHERE p.id = ?`, [id]
+    ).catch(() => [[]]);
+
+    const [[pedD]] = await conn.execute(
+      `SELECT p.*, 'distribuicao' AS origem
+       FROM bling_pedidos_venda_detalhes_distribuicao p WHERE p.id = ?`, [id]
+    ).catch(() => [[]]);
+
+    const ped = pedE || pedD;
+    if (!ped) { conn.release(); return res.status(404).json({ error: 'Pedido não encontrado.' }); }
+
+    const origem = ped.origem;
+    const itensTable = origem === 'ecommerce'
+      ? 'bling_pedidos_venda_detalhes_itens_ecommerce'
+      : 'bling_pedidos_venda_detalhes_itens_distribuicao';
+
+    const [itens] = await conn.execute(
+      `SELECT itens_codigo AS sku,
+              itens_id AS id,
+              itens_descricao AS descricao,
+              itens_quantidade AS quantidade,
+              itens_valor AS precoUnitario,
+              itens_desconto AS desconto,
+              (itens_valor * itens_quantidade) AS total
+       FROM \`${itensTable}\`
+       WHERE pedido_venda_id = ?`, [id]
+    ).catch(() => [[]]);
+
+    conn.release();
+
+    res.json({
+      id: ped.id,
+      numero: ped.numero,
+      data: safeDate(ped.data),
+      dataSaida: safeDate(ped.datasaida),
+      total: parseFloat(ped.total)||0,
+      totalProdutos: parseFloat(ped.totalprodutos)||0,
+      desconto: parseFloat(ped.desconto_valor)||0,
+      frete: parseFloat(ped.transporte_frete)||0,
+      situacao: ped.situacao_nome,
+      origem,
+      cliente: ped.contato_nome,
+      cpf: ped.contato_numerodocumento,
+      cidade: ped.transporte_etiqueta_municipio,
+      estado: ped.transporte_etiqueta_uf,
+      cep: ped.transporte_etiqueta_cep,
+      transportadora: ped.transporte_contato_nome,
+      itens: (itens||[]).map(i => ({
+        sku: i.sku,
+        descricao: i.descricao || i.sku,
+        quantidade: parseFloat(i.quantidade)||1,
+        precoUnitario: parseFloat(i.precoUnitario)||0,
+        desconto: parseFloat(i.desconto)||0,
+        total: parseFloat(i.total)||0
+      }))
+    });
+  } catch (err) {
+    logger.error('orders/:id: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── SEGMENTOS ─────────────────────────────────────────────────
 app.get('/api/segments', async (req, res) => {
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, data, total`,
+      `contato_id, contato_nome, data, total`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'`);
 
-    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
+    const [rows] = await conn.execute(
+      `SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
     conn.release();
 
     const map = new Map();
     rows.forEach(r => {
+      if (isNotClient(r.contato_nome)) return;
       if (!map.has(r.contato_id)) {
         map.set(r.contato_id, { orders:0, spent:0, firstDate:r.data, lastDate:r.data });
       }
       const c = map.get(r.contato_id);
       c.orders++;
       c.spent += parseFloat(r.total||0);
-      if (new Date(r.data) < new Date(c.firstDate)) c.firstDate = r.data;
-      if (new Date(r.data) > new Date(c.lastDate))  c.lastDate  = r.data;
+      if (r.data && r.data < c.firstDate) c.firstDate = r.data;
+      if (r.data && r.data > c.lastDate)  c.lastDate  = r.data;
     });
 
     const clients  = [...map.values()];
@@ -207,15 +454,15 @@ app.get('/api/segments', async (req, res) => {
     const vipLimit = Math.ceil(total * 0.1);
     const sorted   = [...clients].sort((a,b) => b.spent - a.spent);
     const now      = new Date();
-    const s = endDate, e = startDate;
+    const sd = new Date(startDate), ed = new Date(endDate);
 
     const vip        = vipLimit;
     const recorrente = clients.filter(c => c.orders >= 3).length;
     const novo       = clients.filter(c => {
       const fp = new Date(c.firstDate);
-      return fp >= new Date(startDate) && fp <= new Date(endDate);
+      return fp >= sd && fp <= ed;
     }).length;
-    const inativo = clients.filter(c =>
+    const inativo = clients.filter(c => c.lastDate &&
       (now - new Date(c.lastDate)) / 86400000 > 90).length;
 
     res.json({ period:{startDate,endDate}, businessUnit:bu, segments:[
@@ -234,66 +481,82 @@ app.get('/api/segments/:type/customers', async (req, res) => {
   const { type } = req.params;
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  const validTypes = ['vip','recorrente','novo','inativo','em_risco'];
+  if (!validTypes.includes(type)) return res.status(400).json({ error: 'Tipo inválido.' });
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, MAX(contato_nome) AS name, MAX(kdd_cliente_estado) AS state,
+      `contato_id, MAX(contato_nome) AS name,
+       MAX(kdd_cliente_estado) AS state,
        MAX(transporte_etiqueta_municipio) AS city,
+       MAX(transporte_etiqueta_uf) AS stateUF,
        MIN(data) AS firstDate, MAX(data) AS lastDate,
        COUNT(*) AS orders, COALESCE(SUM(total),0) AS spent`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}' GROUP BY contato_id`);
 
-    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
+    const [rows] = await conn.execute(
+      `SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
     conn.release();
 
     const map = new Map();
     rows.forEach(r => {
-      if (!map.has(r.contato_id)) {
-        map.set(r.contato_id, { id:r.contato_id, name:r.name, city:r.city, state:r.state,
-          orderCount: r.orders, totalSpent: parseFloat(r.spent||0),
-          firstDate:r.firstDate, lastDate:r.lastDate,
-          daysSince: Math.floor((new Date()-new Date(r.lastDate))/86400000) });
+      if (isNotClient(r.name)) return;
+      const key = r.contato_id;
+      if (!map.has(key)) {
+        map.set(key, {
+          id: key, name: r.name,
+          city: r.city, state: r.stateUF || r.state,
+          orderCount: parseInt(r.orders)||0,
+          totalSpent: parseFloat(r.spent)||0,
+          firstDate: safeDate(r.firstDate),
+          lastDate: safeDate(r.lastDate),
+          daysSince: r.lastDate ? Math.floor((Date.now()-new Date(r.lastDate))/86400000) : null,
+          businessUnit: r.origem
+        });
       } else {
-        const ex = map.get(r.contato_id);
-        ex.orderCount += r.orders;
-        ex.totalSpent += parseFloat(r.spent||0);
+        const ex = map.get(key);
+        ex.orderCount += parseInt(r.orders)||0;
+        ex.totalSpent += parseFloat(r.spent)||0;
       }
     });
 
     const clients  = [...map.values()];
     const vipLimit = Math.ceil(clients.length * 0.1);
     const sorted   = [...clients].sort((a,b) => b.totalSpent - a.totalSpent);
-    const now      = new Date();
+    const sd = new Date(startDate), ed = new Date(endDate);
 
     let filtered = [];
     if (type==='vip')        filtered = sorted.slice(0, vipLimit);
     if (type==='recorrente') filtered = clients.filter(c => c.orderCount >= 3);
     if (type==='novo')       filtered = clients.filter(c => {
-      const fp = new Date(c.firstDate);
-      return fp >= new Date(startDate) && fp <= new Date(endDate);
+      const fp = c.firstDate ? new Date(c.firstDate) : null;
+      return fp && fp >= sd && fp <= ed;
     });
-    if (type==='inativo')    filtered = clients.filter(c => c.daysSince > 90);
-    if (type==='em_risco')   filtered = clients.filter(c => c.daysSince > 30 && c.daysSince <= 90);
+    if (type==='inativo')    filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 90);
+    if (type==='em_risco')   filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 30 && c.daysSince <= 90);
 
     res.json({ segment:type, customerCount:filtered.length, customers:filtered });
   } catch (err) {
-    logger.error('segments customers: ' + err.message);
+    logger.error('segments/customers: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── RFM — 1 query UNION ALL, cálculo em JS ───────────────────
+// ── RFM ───────────────────────────────────────────────────────
 app.get('/api/rfm/distribution', async (req, res) => {
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, DATEDIFF(CURDATE(),MAX(data)) AS recency,
-       COUNT(*) AS frequency, COALESCE(SUM(total),0) AS monetary`,
+      `contato_id, contato_nome,
+       DATEDIFF(CURDATE(),MAX(data)) AS recency,
+       COUNT(*) AS frequency,
+       COALESCE(SUM(total),0) AS monetary`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}' GROUP BY contato_id`);
 
-    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
+    const [rows] = await conn.execute(
+      `SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
     conn.release();
 
     if (!rows.length) return res.json({ distribution:[] });
@@ -304,19 +567,22 @@ app.get('/api/rfm/distribution', async (req, res) => {
     };
     const score = (v,q) => { for(let i=0;i<q.length;i++) if(v<=q[i]) return i+1; return 5; };
 
-    // Agregar por contato (UNION pode duplicar)
     const map = new Map();
     rows.forEach(r => {
-      if (!map.has(r.contato_id)) {
-        map.set(r.contato_id, { r: r.recency, f: r.frequency, m: parseFloat(r.monetary) });
+      if (isNotClient(r.contato_nome)) return;
+      const key = r.contato_id;
+      if (!map.has(key)) {
+        map.set(key, { r:parseInt(r.recency)||0, f:parseInt(r.frequency)||0, m:parseFloat(r.monetary)||0 });
       } else {
-        const ex = map.get(r.contato_id);
-        ex.f += r.frequency;
-        ex.m += parseFloat(r.monetary);
+        const ex = map.get(key);
+        ex.f += parseInt(r.frequency)||0;
+        ex.m += parseFloat(r.monetary)||0;
       }
     });
 
     const data = [...map.values()];
+    if (!data.length) return res.json({ distribution:[] });
+
     const qR = calcQ(data.map(d=>d.r));
     const qF = calcQ(data.map(d=>d.f));
     const qM = calcQ(data.map(d=>d.m));
@@ -349,10 +615,9 @@ app.get('/api/rfm/distribution', async (req, res) => {
   }
 });
 
-// ── PRODUTOS mais vendidos — 1 query UNION ALL ────────────────
+// ── PRODUTOS ──────────────────────────────────────────────────
 app.get('/api/products/top-selling', async (req, res) => {
   const { orderBy='quantity', limit=20, businessUnit:bu='all', startDate, endDate } = req.query;
-
   const cols = `itens_codigo AS code, SUM(itens_quantidade) AS qty,
                 SUM(itens_valor*itens_quantidade) AS revenue,
                 COUNT(DISTINCT pedido_venda_id) AS orders`;
@@ -360,8 +625,8 @@ app.get('/api/products/top-selling', async (req, res) => {
     ? `WHERE pedido_data BETWEEN '${startDate}' AND '${endDate}' GROUP BY itens_codigo`
     : 'GROUP BY itens_codigo';
 
-  const eco  = `SELECT ${cols}, 'ecommerce' AS origem FROM \`bling_pedidos_venda_detalhes_itens_ecommerce\` ${where}`;
-  const dist = `SELECT ${cols}, 'distribuicao' AS origem FROM \`bling_pedidos_venda_detalhes_itens_distribuicao\` ${where}`;
+  const eco  = `SELECT ${cols}, 'ecommerce' AS origem FROM bling_pedidos_venda_detalhes_itens_ecommerce ${where}`;
+  const dist = `SELECT ${cols}, 'distribuicao' AS origem FROM bling_pedidos_venda_detalhes_itens_distribuicao ${where}`;
   const union = bu==='ecommerce' ? eco : bu==='distributor'||bu==='distribuidor' ? dist : `(${eco}) UNION ALL (${dist})`;
 
   try {
@@ -371,6 +636,7 @@ app.get('/api/products/top-selling', async (req, res) => {
 
     const map = new Map();
     rows.forEach(r => {
+      if (!r.code) return;
       if (!map.has(r.code)) map.set(r.code, { code:r.code, name:r.code, totalQty:0, totalRevenue:0, orderCount:0 });
       const ex = map.get(r.code);
       ex.totalQty     += parseFloat(r.qty)||0;
@@ -389,15 +655,18 @@ app.get('/api/products/top-selling', async (req, res) => {
   }
 });
 
-// ── GEOLOCALIZAÇÃO — 1 query UNION ALL ───────────────────────
+// ── GEOLOCALIZAÇÃO ────────────────────────────────────────────
 app.get('/api/geolocation/states', async (req, res) => {
   const { startDate, endDate, businessUnit:bu='all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `kdd_cliente_estado AS state, COUNT(DISTINCT contato_id) AS customers,
-       COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders`,
+      `kdd_cliente_estado AS state,
+       contato_nome,
+       COUNT(DISTINCT contato_id) AS customers,
+       COALESCE(SUM(total),0) AS revenue,
+       COUNT(*) AS orders`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'
        AND kdd_cliente_estado IS NOT NULL AND kdd_cliente_estado != ''
        GROUP BY kdd_cliente_estado`);
@@ -436,10 +705,14 @@ app.get('/api/geolocation/cities', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `transporte_etiqueta_municipio AS city, kdd_cliente_estado AS state,
-       COUNT(DISTINCT contato_id) AS customers, COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders`,
+      `transporte_etiqueta_municipio AS city,
+       kdd_cliente_estado AS state,
+       COUNT(DISTINCT contato_id) AS customers,
+       COALESCE(SUM(total),0) AS revenue,
+       COUNT(*) AS orders`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'
-       AND transporte_etiqueta_municipio IS NOT NULL AND transporte_etiqueta_municipio != ''
+       AND transporte_etiqueta_municipio IS NOT NULL
+       AND transporte_etiqueta_municipio != ''
        ${stateFilter} GROUP BY transporte_etiqueta_municipio, kdd_cliente_estado`);
 
     const [rows] = await conn.execute(`SELECT * FROM (${union}) t`);
@@ -466,7 +739,7 @@ app.get('/api/geolocation/cities', async (req, res) => {
   }
 });
 
-// ── CAMPANHAS — 1 query UNION ALL ────────────────────────────
+// ── CAMPANHAS ─────────────────────────────────────────────────
 app.get('/api/campaign/metrics', async (req, res) => {
   const { startDate, endDate, businessUnit:bu='all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
@@ -499,7 +772,13 @@ app.get('/api/campaign/metrics', async (req, res) => {
   }
 });
 
-// ── 404 → frontend ────────────────────────────────────────────
+// ── 404 API ───────────────────────────────────────────────────
+// Rotas /api/ que não existem retornam JSON, nunca HTML
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Endpoint não encontrado.' });
+});
+
+// ── SPA fallback — DEVE vir DEPOIS de todas as rotas /api/ ───
 app.get('*', (_req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
