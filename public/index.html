@@ -732,7 +732,9 @@ function renderLegenda(id,faixas,min,max,dark,fmtFn){
   }).join('');
 }
 
-function getSigla(f){return (f.properties.sigla||f.properties.name||'').toUpperCase().slice(-2);}
+function getSigla(f){
+  return (f.properties.sigla||f.properties.name||'').toUpperCase().slice(-2);
+}
 
 function brazilProj(w,h){
   const proj=d3.geoMercator().fitSize([w-16,h-16],{type:'FeatureCollection',features:GEO_DATA.features});
@@ -741,17 +743,13 @@ function brazilProj(w,h){
 }
 
 async function loadGeoData(){
-  const url='https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-00-mun.json';
+  // Usa exatamente a mesma URL do exemplo.html
+  const MAP_GEO_URL='https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
   try {
-    // Usar GeoJSON dos estados (simplificado)
-    const r=await fetch('https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR?formato=application/vnd.geo+json&qualidade=minima&divisao=estado');
+    const r=await fetch(MAP_GEO_URL);
     GEO_DATA=await r.json();
-  } catch(e) {
-    // Fallback: GeoJSON público do Brasil estados
-    try {
-      const r=await fetch('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson');
-      GEO_DATA=await r.json();
-    } catch(e2){ console.warn('Não foi possível carregar GeoJSON dos estados'); }
+  } catch(e){
+    console.warn('Não foi possível carregar GeoJSON dos estados');
   }
 }
 
