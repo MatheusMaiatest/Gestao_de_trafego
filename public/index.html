@@ -733,23 +733,26 @@ function renderLegenda(id,faixas,min,max,dark,fmtFn){
 }
 
 function getSigla(f){
+  // Idêntico ao exemplo.html — pega sigla/name e retorna últimos 2 chars maiúsculos
   return (f.properties.sigla||f.properties.name||'').toUpperCase().slice(-2);
 }
 
 function brazilProj(w,h){
+  // Idêntico ao exemplo.html — fitSize garante que o Brasil ocupe todo o SVG
   const proj=d3.geoMercator().fitSize([w-16,h-16],{type:'FeatureCollection',features:GEO_DATA.features});
   const t=proj.translate();proj.translate([t[0]+8,t[1]+8]);
   return proj;
 }
 
 async function loadGeoData(){
-  // Usa exatamente a mesma URL do exemplo.html
+  // Idêntico ao exemplo.html — URL única, sem fallback para IBGE
   const MAP_GEO_URL='https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
   try {
     const r=await fetch(MAP_GEO_URL);
+    if(!r.ok) throw new Error('HTTP '+r.status);
     GEO_DATA=await r.json();
   } catch(e){
-    console.warn('Não foi possível carregar GeoJSON dos estados');
+    console.warn('Não foi possível carregar GeoJSON dos estados', e);
   }
 }
 
