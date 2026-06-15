@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "name": "Auto Git Push",
+  "description": "Faz git add, commit e push automaticamente sempre que um arquivo do projeto for salvo",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "server.js",
+      "public/index.html",
+      "package.json",
+      "render.yaml"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "cd \"d:\\FERRAMENTAS KIRO\\TRÁFEGO\" && git add -A && git diff --cached --quiet || git commit -m \"auto: atualizar arquivos do projeto\" && git push origin main",
+    "timeout": 30
+  }
+}
