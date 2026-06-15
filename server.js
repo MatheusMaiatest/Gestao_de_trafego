@@ -549,7 +549,7 @@ app.get('/api/rfm/distribution', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, contato_nome,
+      `contato_id, MAX(contato_nome) AS contato_nome,
        DATEDIFF(CURDATE(),MAX(data)) AS recency,
        COUNT(*) AS frequency,
        COALESCE(SUM(total),0) AS monetary`,
@@ -663,7 +663,6 @@ app.get('/api/geolocation/states', async (req, res) => {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
       `kdd_cliente_estado AS state,
-       contato_nome,
        COUNT(DISTINCT contato_id) AS customers,
        COALESCE(SUM(total),0) AS revenue,
        COUNT(*) AS orders`,
