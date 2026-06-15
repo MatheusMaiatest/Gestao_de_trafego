@@ -958,15 +958,15 @@ async function renderDrillMap(geo, uf, stateName, mode, ufMap){
 
   // Lista de cidades no rodapé
   const sorted=[...cities].sort((a,b)=>(mode==='faturamento'?b.totalRevenue-a.totalRevenue:b.customerCount-a.customerCount));
-  const maxCity=sorted[0]??(mode==='faturamento'?sorted[0]?.totalRevenue:sorted[0]?.customerCount)||1;
-  const maxVal=mode==='faturamento'?Math.max(...sorted.map(c=>c.totalRevenue),1):Math.max(...sorted.map(c=>c.customerCount),1);
+  const maxVal=mode==='faturamento'?Math.max.apply(null,sorted.map(function(c){return c.totalRevenue;})):Math.max.apply(null,sorted.map(function(c){return c.customerCount;}));
+  const maxValSafe=maxVal>0?maxVal:1;
 
   document.getElementById('drill-cities-'+mode).innerHTML =
     `<div style="font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm);margin-bottom:6px">📍 Cidades (${sorted.length})</div>`+
     `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">`+
     sorted.map(c=>{
       const v=mode==='faturamento'?c.totalRevenue:c.customerCount;
-      const pct=((v/maxVal)*100).toFixed(1);
+      const pct=((v/maxValSafe)*100).toFixed(1);
       return `<div style="padding:6px 8px;background:var(--bgc);border:1px solid var(--bdr);border-radius:var(--rs)">
         <div style="font-size:.75rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.city}</div>
         <div style="display:flex;justify-content:space-between;font-size:.68rem;margin:2px 0">
