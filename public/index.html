@@ -472,3 +472,217 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
     </div>
   </div>
 </div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG & UTILS
+const API = location.hostname==='localhost'||location.hostname==='127.0.0.1'
+  ? 'http://localhost:3001/api' : '/api';
+const CACHE={}, CACHE_TTL=120000;
+
+async function api(url) {
+  const now=Date.now();
+  if(CACHE[url]&&now-CACHE[url].t<CACHE_TTL) return CACHE[url].d;
+  const r=await fetch(API+url);
+  if(!r.ok) { const txt=await r.text(); throw new Error(txt.startsWith('{') ? JSON.parse(txt).error : 'Erro '+r.status); }
+  const d=await r.json();
+  CACHE[url]={d,t:now};
+  return d;
+}
+function invCache(p){Object.keys(CACHE).filter(k=>k.startsWith(p)).forEach(k=>delete CACHE[k]);}
+
+const fmt  = n=>'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtN = n=>Number(n||0).toLocaleString('pt-BR');
+const fmtD = d=>{
+  if(!d||d==='null'||d==='Invalid Date') return '—';
+  const p=d.toString().split('T')[0];
+  const [y,m,dd]=p.split('-');
+  if(!y||!m||!dd||y==='0000') return '—';
+  return `${dd}/${m}/${y}`;
+};
+function daysAgo(d) {
+  if(!d||d==='null') return null;
+  const dt=new Date(d+'T12:00:00');
+  if(isNaN(dt)) return null;
+  return Math.floor((Date.now()-dt.getTime())/86400000);
+}
+function daysBadge(n) {
+  if(n===null||n===undefined) return '—';
+  const cls=n>90?'days-err':n>30?'days-warn':'days-ok';
+  return `<span class="${cls}">${fmtN(n)}d</span>`;
+}
+function unitBadge(bu) {
+  if(bu==='both')      return `<span class="unit-badge unit-both">🔀 Ambos</span>`;
+  if(bu==='ecommerce') return `<span class="unit-badge unit-eco">🔵 E-com</span>`;
+  if(bu==='distribuicao'||bu==='distributor'||bu==='distribuidor') return `<span class="unit-badge unit-dist">🟣 Dist</span>`;
+  return `<span class="unit-badge">${bu||'—'}</span>`;
+}
+function sitBadge(s) {
+  const l=(s||'').toLowerCase();
+  const cls=l.includes('finaliz')||l.includes('atendi')?'sit-ok':l.includes('cancel')?'sit-err':l.includes('aberto')||l.includes('andamento')?'sit-warn':'sit-def';
+  return `<span class="sit-badge ${cls}">${s||'—'}</span>`;
+}
+function segBadge(seg) {
+  const map={vip:{c:'seg-vip',l:'⭐ VIP'},recorrente:{c:'seg-rec',l:'🔄 Recorrente'},novo:{c:'seg-nov',l:'✨ Novo'},inativo:{c:'seg-ina',l:'😴 Inativo'},em_risco:{c:'seg-ris',l:'⚠️ Risco'}};
+  const x=map[seg]; return x?`<span class="seg-badge ${x.c}">${x.l}</span>`:'—';
+}
+function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+
+// STATE
+let dBU='all', cBU='all';
+let cData=[], cPage=1, cSort={k:'totalSpent',asc:false};
+let colFilters={};  // {colKey: Set<string>}
+let dmData=[], dmPage=1;
+let charts={};
+let GEO_DATA=null;
+const DRILL_CACHE={};
+
+// INIT DATES
+function initDates(){
+  const now=new Date(),end=now.toISOString().slice(0,10);
+  const start=new Date(now-30*86400000).toISOString().slice(0,10);
+  ['d-s','d-e','c-s','c-e','r-s','r-e','dm-s','dm-e'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.value=id.endsWith('-s')?start:end;
+  });
+}
+
+// THEME
+function toggleTheme(){
+  const html=document.documentElement;
+  const dark=html.getAttribute('data-theme')==='dark';
+  html.setAttribute('data-theme',dark?'light':'dark');
+  document.querySelector('.theme-btn').textContent=dark?'☀️':'🌙';
+  Object.values(charts).forEach(c=>c&&c.destroy&&c.destroy());
+  charts={};
+  if(document.getElementById('tab-dashboard').classList.contains('active')) loadDash();
+}
+
+// TABS
+function showTab(name,btn){
+  document.querySelectorAll('.section,.section-with-sidebar').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  btn.classList.add('active');
+  if(name==='clientes'&&!cData.length) loadClientes();
+  if(name==='relatorios'){syncDates('r');loadRKPIs();}
+  if(name==='disparo') syncDates('dm');
+}
+function syncDates(p){
+  const s=document.getElementById('d-s')?.value,e=document.getElementById('d-e')?.value;
+  if(s&&document.getElementById(p+'-s')) document.getElementById(p+'-s').value=s;
+  if(e&&document.getElementById(p+'-e')) document.getElementById(p+'-e').value=e;
+}
+
+function setBU(pfx,btn){
+  const bu=btn.dataset.bu;
+  btn.closest('.btn-group').querySelectorAll('.ubtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(pfx==='d'){dBU=bu;invCache('/dashboard');}
+  if(pfx==='c'){cBU=bu;invCache('/clients');}
+}
+
+// ══════════════════════════════════════════════════════════════
+// DASHBOARD
+async function loadDash(){
+  const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
+  if(!s||!e) return;
+  const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
+  renderKPISkel('d-kpis');
+  try {
+    const [kpi,seg,rfm,prods,geo]=await Promise.all([
+      api('/dashboard/kpis'+q), api('/segments'+q),
+      api('/rfm/distribution'+q),
+      api('/products/top-selling?orderBy=quantity&limit=10&startDate='+s+'&endDate='+e+'&businessUnit='+dBU),
+      api('/geolocation/states'+q)
+    ]);
+    renderDashKPIs(kpi,seg);
+    mkChart('ch-rfm','doughnut',rfm.distribution||[],d=>d.segment,d=>d.customerCount,{rfm:true});
+    mkChart('ch-seg','bar',(seg.segments||[]),d=>d.segment,d=>d.customerCount,{});
+    mkChart('ch-prod','bar',(prods.products||[]).slice(0,10),d=>d.code,d=>d.totalQty||0,{horiz:true});
+    if(GEO_DATA) { renderMapNF(geo.states||[]); renderMapFat(geo.states||[]); }
+    else loadGeoData().then(()=>{renderMapNF(geo.states||[]);renderMapFat(geo.states||[]);});
+  } catch(err){
+    document.getElementById('d-kpis').innerHTML=`<div style="grid-column:1/-1;color:var(--err);padding:14px">❌ ${err.message}</div>`;
+  }
+}
+function renderKPISkel(id){
+  document.getElementById(id).innerHTML=['accent','','ok','err','eco','','','warn'].map(c=>
+    `<div class="kpi-card ${c}"><div class="kpi-lbl"><div class="skel-l skeleton"></div></div><div class="skel-v skeleton"></div></div>`
+  ).join('');
+}
+function renderDashKPIs(kpi,seg){
+  const risco=(seg.segments||[]).find(s=>s.segment==='inativo')?.customerCount||0;
+  const ks=[
+    {l:'Faturamento Total',v:fmt(kpi.totalRevenue),c:'accent'},
+    {l:'Total de Pedidos',v:fmtN(kpi.totalOrders),c:''},
+    {l:'Clientes Ativos',v:fmtN(kpi.activeClients),c:'ok'},
+    {l:'Clientes Inativos',v:fmtN(kpi.inactiveClients),c:'err'},
+    {l:'Novos Clientes',v:fmtN(kpi.newClients),c:'eco'},
+    {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
+    {l:'Freq. de Compra',v:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x',c:''},
+    {l:'Clientes Inativos',v:fmtN(risco),c:'warn'},
+  ];
+  document.getElementById('d-kpis').innerHTML=ks.map(k=>
+    `<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
+  ).join('');
+}
+
+// CHARTS
+const RFM_C={champions:'#ffc107',loyal:'#4caf50',potential_loyal:'#7986cb',promising:'#42a5f5',at_risk:'#ff9800',hibernating:'#9e9e9e',lost:'#f44336'};
+const SEG_C={vip:'#ffc107',recorrente:'#5c6bc0',novo:'#4caf50',inativo:'#f44336',em_risco:'#ff9800'};
+
+function mkChart(id,type,data,labelFn,valFn,opts={}){
+  if(charts[id]){charts[id].destroy();}
+  const ctx=document.getElementById(id);if(!ctx)return;
+  const dark=document.documentElement.getAttribute('data-theme')==='dark';
+  const gc=dark?'rgba(255,255,255,.05)':'rgba(0,0,0,.05)';
+  const tc=dark?'#5c6270':'#9098b8';
+  const labels=data.map(labelFn);
+  const vals=data.map(valFn);
+  const bgColors=opts.rfm?labels.map(l=>RFM_C[l]||'#5c6bc0'):opts.segs?labels.map(l=>SEG_C[l]||'#5c6bc0'):['rgba(92,107,192,.75)'];
+  charts[id]=new Chart(ctx,{
+    type, data:{labels,datasets:[{data:vals,backgroundColor:type==='doughnut'?bgColors:(bgColors.length===1?bgColors[0]:bgColors),borderRadius:type!=='doughnut'?5:0,borderWidth:type==='doughnut'?2:0,borderColor:'var(--bgc)'}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:{duration:600},
+      plugins:{legend:{display:type==='doughnut',labels:{color:tc,font:{size:10}}},
+        tooltip:{callbacks:{label:ctx=>{const v=ctx.raw??ctx.parsed?.y??ctx.parsed;return ` ${typeof v==='number'&&v>1000?fmtN(v):v}`;}}}},
+      scales:type==='doughnut'?{}:{
+        x:{ticks:{color:tc,font:{size:10}},grid:{color:gc},...(opts.horiz?{display:true}:{})},
+        y:{ticks:{color:tc,font:{size:10}},grid:{color:gc},...(opts.horiz?{display:false}:{})}
+      },
+      indexAxis:opts.horiz?'y':'x'
+    }
+  });
+  return charts[id];
+}
+
+// MODAL CHART
+async function openChartModal(type){
+  const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
+  const titles={rfm:'Distribuição RFM',seg:'Segmentos',prod:'Top Produtos'};
+  document.getElementById('mch-title').textContent=titles[type]||type;
+  document.getElementById('mch-sub').textContent=`${fmtD(s)} a ${fmtD(e)}`;
+  openOv('ov-chart');
+  const mchC=document.getElementById('mch-canvas');
+  if(charts['modal-ch']){charts['modal-ch'].destroy();}
+  document.getElementById('mch-table').innerHTML='';
+  try {
+    let data,html='';
+    const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
+    if(type==='rfm'){
+      data=(await api('/rfm/distribution'+q)).distribution||[];
+      mkChart('mch-canvas','doughnut',data,d=>d.segment,d=>d.customerCount,{rfm:true});
+      html=`<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:.8rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="padding:7px;text-align:left">Segmento</th><th style="padding:7px;text-align:right">Clientes</th><th style="padding:7px;text-align:right">%</th></tr></thead><tbody>`+data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:7px">${d.segment}</td><td style="padding:7px;text-align:right">${fmtN(d.customerCount)}</td><td style="padding:7px;text-align:right">${d.percentage}%</td></tr>`).join('')+'</tbody></table>';
+    }else if(type==='seg'){
+      data=(await api('/segments'+q)).segments||[];
+      mkChart('mch-canvas','bar',data,d=>d.segment,d=>d.customerCount,{segs:true});
+      html=`<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:.8rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="padding:7px;text-align:left">Segmento</th><th style="padding:7px;text-align:right">Clientes</th></tr></thead><tbody>`+data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:7px">${segBadge(d.segment)}</td><td style="padding:7px;text-align:right">${fmtN(d.customerCount)}</td></tr>`).join('')+'</tbody></table>';
+    }else if(type==='prod'){
+      data=(await api(`/products/top-selling?orderBy=quantity&limit=20&startDate=${s}&endDate=${e}&businessUnit=${dBU}`)).products||[];
+      mkChart('mch-canvas','bar',data,d=>d.code,d=>d.totalQty||0,{horiz:true});
+      html=`<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:.8rem"><thead><tr style="border-bottom:1px solid var(--bdr)"><th style="padding:7px;text-align:left">Produto</th><th style="padding:7px;text-align:right">Qtd</th><th style="padding:7px;text-align:right">Receita</th></tr></thead><tbody>`+data.map(d=>`<tr style="border-bottom:1px solid var(--bdr)"><td style="padding:7px">${d.code}</td><td style="padding:7px;text-align:right">${fmtN(d.totalQty||0)}</td><td style="padding:7px;text-align:right;color:var(--ok)">${fmt(d.totalRevenue)}</td></tr>`).join('')+'</tbody></table>';
+    }
+    document.getElementById('mch-table').innerHTML=html;
+  } catch(err){document.getElementById('mch-table').innerHTML=`<p style="color:var(--err)">${err.message}</p>`;}
+}
+</script>
