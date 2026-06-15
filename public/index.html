@@ -711,9 +711,27 @@ function renderLegenda(id,faixas,min,max,dark,fmtFn){
   }).join('');
 }
 
+// Mapeamento nome completo → sigla para o GeoJSON do codeforamerica
+const _NAME_TO_UF={
+  'Acre':'AC','Alagoas':'AL','Amapá':'AP','Amazonas':'AM','Bahia':'BA',
+  'Ceará':'CE','Distrito Federal':'DF','Espírito Santo':'ES','Goiás':'GO',
+  'Maranhão':'MA','Mato Grosso':'MT','Mato Grosso do Sul':'MS','Minas Gerais':'MG',
+  'Pará':'PA','Paraíba':'PB','Paraná':'PR','Pernambuco':'PE','Piauí':'PI',
+  'Rio de Janeiro':'RJ','Rio Grande do Norte':'RN','Rio Grande do Sul':'RS',
+  'Rondônia':'RO','Roraima':'RR','Santa Catarina':'SC','São Paulo':'SP',
+  'Sergipe':'SE','Tocantins':'TO'
+};
+
 function getSigla(f){
-  // Idêntico ao exemplo.html — pega sigla/name e retorna últimos 2 chars maiúsculos
-  return (f.properties.sigla||f.properties.name||'').toUpperCase().slice(-2);
+  const p=f.properties;
+  // Tenta campo sigla direto (IBGE e outros GeoJSONs)
+  if(p.sigla&&p.sigla.length===2) return p.sigla.toUpperCase();
+  // Tenta campo name com 2 chars (alguns GeoJSONs já têm a sigla em name)
+  if(p.name&&p.name.length===2) return p.name.toUpperCase();
+  // Mapeamento pelo nome completo (codeforamerica brazil-states.geojson)
+  if(p.name&&_NAME_TO_UF[p.name]) return _NAME_TO_UF[p.name];
+  // Fallback: últimos 2 chars
+  return (p.sigla||p.name||'').toUpperCase().slice(-2);
 }
 
 function brazilProj(w,h){
