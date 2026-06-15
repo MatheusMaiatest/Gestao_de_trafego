@@ -429,7 +429,7 @@ app.get('/api/segments', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
-      `contato_id, MAX(contato_nome) AS contato_nome, data, total`,
+      `contato_id, contato_nome, data, total`,
       `WHERE data BETWEEN '${startDate}' AND '${endDate}'`);
 
     const [rows] = await conn.execute(
