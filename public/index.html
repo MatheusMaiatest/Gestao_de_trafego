@@ -1311,7 +1311,7 @@ async function loadClientes(){
     ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
     document.getElementById('c-count').textContent=`${fmtN(tot)} clientes`;
   } catch(err){
-    document.getElementById('c-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+    document.getElementById('c-tbody').innerHTML=`<tr><td colspan="13" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
   } finally {
     if(btnC){btnC.disabled=false;btnC.textContent='🔍 Buscar';}
   }
