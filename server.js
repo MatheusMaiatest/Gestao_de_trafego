@@ -72,6 +72,19 @@ function safeDate(d) {
   return dt.toISOString().slice(0,10);
 }
 
+// ── Validação de inputs (CORREÇÃO 5 — SQL Injection prevention) ──
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+function validateDate(d) {
+  if (!d || !DATE_REGEX.test(String(d))) throw new Error('Data inválida: use o formato YYYY-MM-DD');
+  return String(d);
+}
+const VALID_BU = ['all', 'ecommerce', 'distributor', 'distribuidor'];
+function validateBU(bu) {
+  const v = bu || 'all';
+  if (!VALID_BU.includes(v)) throw new Error('businessUnit inválido');
+  return v;
+}
+
 // ══════════════════════════════════════════════════════════════
 // ROTAS API — todas começam com /api/
 // ══════════════════════════════════════════════════════════════
@@ -101,11 +114,14 @@ app.get('/api/dashboard/kpis', async (req, res) => {
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   try {
+    const start = validateDate(startDate);
+    const end   = validateDate(endDate);
+    const unit  = validateBU(bu);
     const conn = await pool.getConnection();
 
-    const union = unionSQL(bu,
+    const union = unionSQL(unit,
       `contato_id, total, data`,
-      `WHERE data BETWEEN '${startDate}' AND '${endDate}'`);
+      `WHERE data BETWEEN '${start}' AND '${end}'`);
 
     const [[kpi]] = await conn.execute(`
       SELECT COUNT(*) AS totalOrders,
@@ -121,7 +137,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
         SELECT contato_id FROM (${unionAll}) t
         WHERE contato_id IS NOT NULL
         GROUP BY contato_id
-        HAVING MIN(data) BETWEEN '${startDate}' AND '${endDate}'
+        HAVING MIN(data) BETWEEN '${start}' AND '${end}'
       ) n`);
 
     const [[inat]] = await conn.execute(`
@@ -138,7 +154,7 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const active = parseInt(kpi.activeClients)||0;
     const orders = parseInt(kpi.totalOrders)||0;
     res.json({
-      period: { startDate, endDate }, businessUnit: bu,
+      period: { startDate: start, endDate: end }, businessUnit: unit,
       totalClients: active, activeClients: active,
       inactiveClients: parseInt(inat.total)||0,
       newClients: parseInt(novos.total)||0,
@@ -561,6 +577,7 @@ app.get('/api/segments', async (req, res) => {
   }
 });
 
+// CORREÇÃO 1: Adicionar cpf na query de segments/:type/customers
 app.get('/api/segments/:type/customers', async (req, res) => {
   const { type } = req.params;
   const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
@@ -571,6 +588,7 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     const conn = await pool.getConnection();
     const union = unionSQL(bu,
       `contato_id, MAX(contato_nome) AS name,
+       MAX(contato_numerodocumento) AS cpf,
        MAX(kdd_cliente_estado) AS state,
        MAX(transporte_etiqueta_municipio) AS city,
        MAX(transporte_etiqueta_uf) AS stateUF,
@@ -589,6 +607,7 @@ app.get('/api/segments/:type/customers', async (req, res) => {
       if (!map.has(key)) {
         map.set(key, {
           id: key, name: r.name,
+          cpf: r.cpf || null,
           city: r.city, state: r.stateUF || r.state,
           orderCount: parseInt(r.orders)||0,
           totalSpent: parseFloat(r.spent)||0,
@@ -702,7 +721,9 @@ app.get('/api/rfm/distribution', async (req, res) => {
 // ── PRODUTOS ──────────────────────────────────────────────────
 app.get('/api/products/top-selling', async (req, res) => {
   const { orderBy='quantity', limit=20, businessUnit:bu='all', startDate, endDate } = req.query;
-  const cols = `itens_codigo AS code, SUM(itens_quantidade) AS qty,
+  const cols = `itens_codigo AS code,
+                MAX(itens_descricao) AS name_raw,
+                SUM(itens_quantidade) AS qty,
                 SUM(itens_valor*itens_quantidade) AS revenue,
                 COUNT(DISTINCT pedido_venda_id) AS orders`;
   const where = startDate && endDate
@@ -721,11 +742,17 @@ app.get('/api/products/top-selling', async (req, res) => {
     const map = new Map();
     rows.forEach(r => {
       if (!r.code) return;
-      if (!map.has(r.code)) map.set(r.code, { code:r.code, name:r.code, totalQty:0, totalRevenue:0, orderCount:0 });
+      if (!map.has(r.code)) map.set(r.code, {
+        code: r.code,
+        name: r.name_raw || r.code,
+        totalQty: 0, totalRevenue: 0, orderCount: 0
+      });
       const ex = map.get(r.code);
       ex.totalQty     += parseFloat(r.qty)||0;
       ex.totalRevenue += parseFloat(r.revenue)||0;
       ex.orderCount   += parseInt(r.orders)||0;
+      // Atualizar nome se disponível e ainda não definido
+      if (r.name_raw && ex.name === ex.code) ex.name = r.name_raw;
     });
 
     const products = [...map.values()]
