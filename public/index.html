@@ -627,6 +627,7 @@ async function loadDash(){
   if(!s||!e) return;
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
   saveFilters();
+  const btnDash=document.querySelector('#tab-dashboard .btn-search');
   if(btnDash){btnDash.disabled=true;btnDash.textContent='⏳ Buscando...';}
   const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
   renderKPISkel('d-kpis');
@@ -1262,6 +1263,7 @@ async function loadClientes(){
   const search=document.getElementById('c-search').value.trim();
   if(!s||!e) return;
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  saveFilters();
   const btnC=document.querySelector('#tab-clientes .btn-search');
   if(btnC){btnC.disabled=true;btnC.textContent='⏳ Buscando...';}
   document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
@@ -1586,6 +1588,7 @@ async function loadDisparo(){
   const bu=document.getElementById('dm-bu').value;
   if(!s||!e){alert('Selecione o período');return;}
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  saveFilters();
   const btnDm=document.querySelector('#tab-disparo .btn-search');
   if(btnDm){btnDm.disabled=true;btnDm.textContent='⏳ Buscando...';}
   document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
