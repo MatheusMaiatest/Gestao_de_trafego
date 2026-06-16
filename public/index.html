@@ -733,19 +733,33 @@ function calcularFaixas(valores, numFaixas) {
 function getHeatColorEx(value, min, max, dark) {
   if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
   if (max <= min) return dark ? '#1e3a5f' : '#3b82f6';
-  var normalized = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  // Escala heat map: frio (azul escuro) → quente (vermelho)
-  // Azul → ciano → verde → amarelo → laranja → vermelho
-  var stops = [
-    [0,   dark ? '#0c1a3a' : '#dbeafe'],   // frio: azul muito escuro / azul claro
-    [0.2, dark ? '#1e3a8a' : '#3b82f6'],   // azul médio
-    [0.4, dark ? '#0ea5e9' : '#06b6d4'],   // ciano
-    [0.6, dark ? '#16a34a' : '#22c55e'],   // verde
-    [0.75,dark ? '#ca8a04' : '#eab308'],   // amarelo
-    [0.85,dark ? '#ea580c' : '#f97316'],   // laranja
-    [1.0, dark ? '#dc2626' : '#dc2626']    // quente: vermelho
+
+  // Usar escala logarítmica para maximizar contraste entre valores extremos
+  var logMin = Math.log1p(min);
+  var logMax = Math.log1p(max);
+  var logVal = Math.log1p(value);
+  var normalized = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
+  normalized = Math.max(0, Math.min(1, normalized));
+
+  // Escala de 7 stops: azul muito escuro → azul → ciano → verde → amarelo → laranja → vermelho
+  var stops = dark ? [
+    [0,    '#050d1a'],  // frio total: quase preto azulado
+    [0.15, '#0d2461'],  // azul marinho
+    [0.30, '#1565c0'],  // azul
+    [0.50, '#0097a7'],  // ciano
+    [0.65, '#2e7d32'],  // verde
+    [0.80, '#f57f17'],  // amarelo/laranja
+    [1.0,  '#b71c1c']   // vermelho quente
+  ] : [
+    [0,    '#e3f2fd'],  // azul clarinho
+    [0.15, '#90caf9'],  // azul claro
+    [0.30, '#1976d2'],  // azul médio
+    [0.50, '#00acc1'],  // ciano
+    [0.65, '#43a047'],  // verde
+    [0.80, '#fb8c00'],  // laranja
+    [1.0,  '#c62828']   // vermelho
   ];
-  // Interpolar entre os stops
+
   var i = 0;
   while (i < stops.length - 2 && normalized > stops[i+1][0]) i++;
   var t0 = stops[i][0], t1 = stops[i+1][0];
