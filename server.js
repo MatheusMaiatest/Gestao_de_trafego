@@ -239,12 +239,16 @@ app.get('/api/clients', async (req, res) => {
     rows.forEach(r => {
       if (!r.contato_id || isNotClient(r.name)) return;
       const key = r.contato_id;
+      const contactInfo = emailMap.get(String(key)) || {};
+      const trayEmail   = trayMap.get(String(key)) || null;
       if (!map.has(key)) {
         map.set(key, {
           id: r.contato_id,
           name: r.name,
           cpf: r.cpf,
           tipoPessoa: r.tipoPessoa,
+          email: contactInfo.email || trayEmail || null,
+          telefone: contactInfo.telefone || null,
           city: r.city || null,
           state: r.stateUF || r.state || null,
           businessUnit: r.origem,
