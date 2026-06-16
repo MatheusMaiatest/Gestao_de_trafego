@@ -993,12 +993,24 @@ function renderDrillMap(geo, uf, stateName, mode) {
     .then(function(res){
       var cities = res.cities||[];
 
-      // Mapear cidade normalizada → dados
+      // Mapear cidade normalizada → dados (índice exato E por prefixo)
       var cityData={};
+      var cityDataByPrefix={};
       cities.forEach(function(c){
         var key=normalizeCity(c.city);
-        cityData[key]={customers:c.customerCount, revenue:c.totalRevenue};
+        cityData[key]={customers:c.customerCount, revenue:c.totalRevenue, originalName:c.city};
+        // Índice por prefixo (primeiras 8 letras) para match fuzzy
+        var prefix=key.replace(/\s/g,'').substring(0,8);
+        if(!cityDataByPrefix[prefix]) cityDataByPrefix[prefix]={customers:c.customerCount, revenue:c.totalRevenue, originalName:c.city};
       });
+
+      // Lookup com fallback fuzzy
+      function lookupCity(geoName){
+        var key=normalizeCity(geoName);
+        if(cityData[key]) return cityData[key];
+        var prefix=key.replace(/\s/g,'').substring(0,8);
+        return cityDataByPrefix[prefix]||null;
+      }
 
       document.getElementById(subId).textContent = cities.length + ' cidade' + (cities.length!==1?'s':'') + ' encontrada' + (cities.length!==1?'s':'');
 
