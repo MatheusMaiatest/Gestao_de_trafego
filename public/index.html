@@ -1040,7 +1040,7 @@ function renderDrillMap(geo, uf, stateName, mode) {
 
       geo.features.forEach(function(feature){
         var munName = normalizeCity(feature.properties.name||'');
-        var cd = cityData[munName];
+        var cd = lookupCity(feature.properties.name||'');
         var val = cd?(useVal?cd.revenue:cd.customers):0;
         var hasData = !!cd;
 
@@ -1054,8 +1054,11 @@ function renderDrillMap(geo, uf, stateName, mode) {
           .attr('opacity', hasData ? 1 : 0.5)
           .on('mouseenter',function(event){
             var label = feature.properties.name||'';
-            if(hasData){ showMapTip(event, label+': '+fmtN(cd.customers)+' clientes / '+fmt(cd.revenue)); }
-            else        { showMapTip(event, label+': Sem dados'); }
+            if(hasData){
+              showMapTip(event, label+': '+fmtN(cd.customers)+' clientes / '+fmt(cd.revenue));
+            } else {
+              showMapTip(event, label+': Sem dados');
+            }
           })
           .on('mousemove',moveMapTip)
           .on('mouseleave',hideMapTip);
