@@ -1331,7 +1331,7 @@ function renderClienteTable(){
   const filtered=applyColFilters(cData);
   const start=(cPage-1)*PER,page=filtered.slice(start,start+PER);
   if(!page.length){
-    document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="empty-state"><div class="icon">👥</div><p>Nenhum cliente encontrado</p></div></td></tr>';
+    document.getElementById('c-tbody').innerHTML='<tr><td colspan="13"><div class="empty-state"><div class="icon">👥</div><p>Nenhum cliente encontrado</p></div></td></tr>';
     document.getElementById('c-pag').innerHTML='';
     return;
   }
