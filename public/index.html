@@ -1178,6 +1178,9 @@ async function loadClientes(){
   const seg=document.getElementById('c-seg').value;
   const search=document.getElementById('c-search').value.trim();
   if(!s||!e) return;
+  if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  const btnC=document.querySelector('#tab-clientes .btn-search');
+  if(btnC){btnC.disabled=true;btnC.textContent='⏳ Buscando...';}
   document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
   colFilters={};
   try {
@@ -1221,10 +1224,10 @@ async function loadClientes(){
     document.getElementById('c-count').textContent=`${fmtN(tot)} clientes`;
   } catch(err){
     document.getElementById('c-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+  } finally {
+    if(btnC){btnC.disabled=false;btnC.textContent='🔍 Buscar';}
   }
 }
-
-function applyColFilters(data){
   return data.filter(c=>{
     return Object.entries(colFilters).every(([k,set])=>{
       if(!set||set.size===0) return true;
