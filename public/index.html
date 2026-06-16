@@ -1342,6 +1342,8 @@ function renderClienteTable(){
       <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
       <td>${unitBadge(bu)}</td>
       <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.7rem;color:var(--ac)">${c.email||'—'}</td>
+      <td style="font-size:.7rem">${c.telefone||'—'}</td>
       <td style="font-size:.7rem;color:var(--tm)">${cpfFmt}</td>
       <td style="font-size:.72rem">${fmtD(c.firstPurchaseDate||c.firstDate)}</td>
       <td style="font-size:.72rem">${fmtD(c.lastPurchaseDate||c.lastDate)}</td>
@@ -1606,7 +1608,7 @@ async function loadDisparo(){
       {l:'Pot. Faturamento',v:fmt(sp),c:'accent'},
     ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
   }catch(err){
-    document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="10" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+    document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
   } finally {
     if(btnDm){btnDm.disabled=false;btnDm.textContent='🔍 Buscar';}
   }
@@ -1616,7 +1618,7 @@ function renderDisparoTable(seg){
   const oppMap={inativo:{l:'Reativar',c:'opp-reativar'},em_risco:{l:'Em Risco',c:'opp-risco'},vip:{l:'Manter VIP',c:'opp-vip'},recorrente:{l:'Fidelizar',c:'opp-fid'},novo:{l:'Engajar',c:'opp-fid'}};
   const opp=oppMap[seg]||{l:seg,c:'opp-fid'};
   const start=(dmPage-1)*PER,page=dmData.slice(start,start+PER);
-  if(!page.length){document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="empty-state"><div class="icon">📱</div><p>Nenhum cliente neste segmento</p></div></td></tr>';document.getElementById('dm-pag').innerHTML='';return;}
+  if(!page.length){document.getElementById('dm-tbody').innerHTML='<tr><td colspan="11"><div class="empty-state"><div class="icon">📱</div><p>Nenhum cliente neste segmento</p></div></td></tr>';document.getElementById('dm-pag').innerHTML='';return;}
   document.getElementById('dm-tbody').innerHTML=page.map(c=>{
     const bu=c.businessUnit||c.origem||'';
     const d=c.daysSince??daysAgo(c.lastDate||c.lastPurchaseDate);
@@ -1625,11 +1627,12 @@ function renderDisparoTable(seg){
       <td><span class="client-link" onclick="openClientModal('${c.id||c.contato_id}')">${c.name||'—'}</span></td>
       <td>${unitBadge(bu)}</td>
       <td>${c.city||'—'}/${c.state||'—'}</td>
+      <td style="font-size:.7rem;color:var(--ac)">${c.email||'—'}</td>
+      <td style="font-size:.7rem">${c.telefone||'—'}</td>
       <td style="font-size:.72rem">${fmtD(c.lastDate||c.lastPurchaseDate)}</td>
       <td>${daysBadge(d)}</td>
       <td style="text-align:center">${fmtN(c.orderCount||c.totalOrders||0)}</td>
       <td style="color:var(--ok);font-weight:700">${fmt(c.totalSpent)}</td>
-      <td>${fmt(c.averageTicket||0)}</td>
       <td><span class="${opp.c}">${opp.l}</span></td>
       <td>${waNum?`<a class="btn-wa" href="https://wa.me/55${waNum}" target="_blank">📱 WhatsApp</a>`:'<span style="color:var(--tm);font-size:.7rem">—</span>'}</td>
     </tr>`;
