@@ -882,6 +882,12 @@ function renderMapNF(states){
     if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
     return getHeatColorByRank(value, sortedNF, dark);
   };
+
+  var W=460,H=400;
+  var proj=brazilProjection(W,H);
+  var path=d3.geoPath().projection(proj);
+
+  var svg=d3.select('#svg-nf');
   svg.selectAll('*').remove();
   svg.attr('viewBox','0 0 '+W+' '+H).style('display','block');
   var el=document.getElementById('ml-nf'); if(el) el.style.display='none';
