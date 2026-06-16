@@ -1,14 +1,24 @@
-# Dependências
+# Dependências — nunca versionar
 node_modules/
 
-# Ambiente
+# Variáveis de ambiente — NUNCA versionar (contém senhas)
 .env
+.env.local
+.env.production
 
 # Logs
-*.log
 logs/
+*.log
 
-# Pastas desnecessárias
-backend/
-exemplo/
+# IDE e OS
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Kiro specs (opcional — descomente se não quiser versionar)
+# .kiro/
+
+# Arquivos temporários
+*.tmp
+*.temp
