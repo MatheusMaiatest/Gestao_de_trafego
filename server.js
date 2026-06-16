@@ -722,51 +722,40 @@ app.get('/api/rfm/distribution', async (req, res) => {
 app.get('/api/products/top-selling', async (req, res) => {
   const { orderBy='quantity', limit=20, businessUnit:bu='all', startDate, endDate } = req.query;
 
-  // Tentar descobrir o nome da coluna de descrição dinamicamente
-  // Colunas candidatas em tabelas Bling: itens_descricao, itens_produto, itens_nome, itens_descrprod
-  const descCol = `COALESCE(
-    NULLIF(TRIM(itens_descricao),''),
-    NULLIF(TRIM(itens_produto),''),
-    NULLIF(TRIM(itens_nome),''),
-    itens_codigo
-  )`;
+  const whereClause = startDate && endDate
+    ? `WHERE i.pedido_data BETWEEN '${startDate}' AND '${endDate}'`
+    : '';
 
-  const cols = `itens_codigo AS code,
-                MAX(${descCol}) AS name_raw,
-                SUM(itens_quantidade) AS qty,
-                SUM(itens_valor*itens_quantidade) AS revenue,
-                COUNT(DISTINCT pedido_venda_id) AS orders`;
-  const where = startDate && endDate
-    ? `WHERE pedido_data BETWEEN '${startDate}' AND '${endDate}' GROUP BY itens_codigo`
-    : 'GROUP BY itens_codigo';
+  // Query com JOIN na tabela de produtos para buscar o nome real
+  const ecoQ = `SELECT i.itens_codigo AS code,
+                  MAX(COALESCE(NULLIF(TRIM(p.nome),''), i.itens_codigo)) AS name_raw,
+                  SUM(i.itens_quantidade) AS qty,
+                  SUM(i.itens_valor*i.itens_quantidade) AS revenue,
+                  COUNT(DISTINCT i.pedido_venda_id) AS orders,
+                  'ecommerce' AS origem
+                FROM bling_pedidos_venda_detalhes_itens_ecommerce i
+                LEFT JOIN bling_produtos_detalhes_ecommerce p ON p.id = i.itens_produto_id
+                ${whereClause}
+                GROUP BY i.itens_codigo`;
 
-  const eco  = `SELECT ${cols}, 'ecommerce' AS origem FROM bling_pedidos_venda_detalhes_itens_ecommerce ${where}`;
-  const dist = `SELECT ${cols}, 'distribuicao' AS origem FROM bling_pedidos_venda_detalhes_itens_distribuicao ${where}`;
-  const union = bu==='ecommerce' ? eco : bu==='distributor'||bu==='distribuidor' ? dist : `(${eco}) UNION ALL (${dist})`;
+  const distQ = `SELECT i.itens_codigo AS code,
+                  MAX(COALESCE(NULLIF(TRIM(p.nome),''), i.itens_codigo)) AS name_raw,
+                  SUM(i.itens_quantidade) AS qty,
+                  SUM(i.itens_valor*i.itens_quantidade) AS revenue,
+                  COUNT(DISTINCT i.pedido_venda_id) AS orders,
+                  'distribuicao' AS origem
+                FROM bling_pedidos_venda_detalhes_itens_distribuicao i
+                LEFT JOIN bling_produtos_detalhes_distribuicao p ON p.id = i.itens_produto_id
+                ${whereClause}
+                GROUP BY i.itens_codigo`;
+
+  const union = bu==='ecommerce' ? ecoQ
+              : bu==='distributor'||bu==='distribuidor' ? distQ
+              : `(${ecoQ}) UNION ALL (${distQ})`;
 
   try {
     const conn = await pool.getConnection();
-
-    // Primeira tentativa com colunas de descrição
-    let rows;
-    try {
-      [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE code IS NOT NULL`);
-    } catch (colErr) {
-      // Fallback: se nenhuma coluna de descrição existir, usa só o código
-      logger.warn('products col fallback: ' + colErr.message);
-      const colsSimple = `itens_codigo AS code,
-                          itens_codigo AS name_raw,
-                          SUM(itens_quantidade) AS qty,
-                          SUM(itens_valor*itens_quantidade) AS revenue,
-                          COUNT(DISTINCT pedido_venda_id) AS orders`;
-      const whereSimple = startDate && endDate
-        ? `WHERE pedido_data BETWEEN '${startDate}' AND '${endDate}' GROUP BY itens_codigo`
-        : 'GROUP BY itens_codigo';
-      const ecoS  = `SELECT ${colsSimple}, 'ecommerce' AS origem FROM bling_pedidos_venda_detalhes_itens_ecommerce ${whereSimple}`;
-      const distS = `SELECT ${colsSimple}, 'distribuicao' AS origem FROM bling_pedidos_venda_detalhes_itens_distribuicao ${whereSimple}`;
-      const unionS = bu==='ecommerce' ? ecoS : bu==='distributor'||bu==='distribuidor' ? distS : `(${ecoS}) UNION ALL (${distS})`;
-      [rows] = await conn.execute(`SELECT * FROM (${unionS}) t WHERE code IS NOT NULL`);
-    }
+    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE code IS NOT NULL`);
     conn.release();
 
     const map = new Map();
