@@ -539,7 +539,44 @@ let GEO_DATA=null;
 
 
 // INIT DATES
+// ── Persistência de filtros no sessionStorage ──────────────
+const FILTER_KEY = 'ic_filters';
+function saveFilters(){
+  const f={
+    ds: document.getElementById('d-s')?.value,
+    de: document.getElementById('d-e')?.value,
+    dbu: dBU,
+    cs: document.getElementById('c-s')?.value,
+    ce: document.getElementById('c-e')?.value,
+    cbu: cBU,
+    rs: document.getElementById('r-s')?.value,
+    re: document.getElementById('r-e')?.value,
+    rbu: document.getElementById('r-bu')?.value,
+    dms: document.getElementById('dm-s')?.value,
+    dme: document.getElementById('dm-e')?.value
+  };
+  try { sessionStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch(e){}
+}
+function loadFilters(){
+  try {
+    const raw = sessionStorage.getItem(FILTER_KEY);
+    if(!raw) return false;
+    const f = JSON.parse(raw);
+    const set = (id, v) => { const el=document.getElementById(id); if(el&&v) el.value=v; };
+    set('d-s', f.ds); set('d-e', f.de);
+    set('c-s', f.cs); set('c-e', f.ce);
+    set('r-s', f.rs); set('r-e', f.re);
+    set('r-bu', f.rbu);
+    set('dm-s', f.dms); set('dm-e', f.dme);
+    if(f.dbu){ dBU=f.dbu; document.querySelectorAll('#tab-dashboard .ubtn').forEach(b=>{ b.classList.toggle('active', b.dataset.bu===f.dbu); }); }
+    if(f.cbu){ cBU=f.cbu; document.querySelectorAll('#tab-clientes .ubtn').forEach(b=>{ b.classList.toggle('active', b.dataset.bu===f.cbu); }); }
+    return true;
+  } catch(e){ return false; }
+}
+
 function initDates(){
+  // Tentar restaurar filtros salvos; se não, usar padrão 30 dias
+  if(loadFilters()) return;
   const now=new Date(),end=now.toISOString().slice(0,10);
   const start=new Date(now-30*86400000).toISOString().slice(0,10);
   ['d-s','d-e','c-s','c-e','r-s','r-e','dm-s','dm-e'].forEach(id=>{
