@@ -731,16 +731,26 @@ function calcularFaixas(valores, numFaixas) {
 }
 
 function getHeatColorEx(value, min, max, dark) {
-  if (max === min) return dark ? '#5c6bc0' : '#3949ab';
-  var normalized = (value - min) / (max - min);
-  var colors = dark
-    ? ['#1e3a8a', '#0ea5e9', '#10b981', '#fbbf24', '#f97316', '#dc2626']
-    : ['#3b82f6', '#06b6d4', '#22c55e', '#eab308', '#f97316', '#dc2626'];
-  var idx = normalized * (colors.length - 1);
-  var i = Math.floor(idx);
-  var f = idx - i;
-  if (i >= colors.length - 1) return colors[colors.length - 1];
-  var c1 = colors[i], c2 = colors[i + 1];
+  if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
+  if (max <= min) return dark ? '#1e3a5f' : '#3b82f6';
+  var normalized = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  // Escala heat map: frio (azul escuro) → quente (vermelho)
+  // Azul → ciano → verde → amarelo → laranja → vermelho
+  var stops = [
+    [0,   dark ? '#0c1a3a' : '#dbeafe'],   // frio: azul muito escuro / azul claro
+    [0.2, dark ? '#1e3a8a' : '#3b82f6'],   // azul médio
+    [0.4, dark ? '#0ea5e9' : '#06b6d4'],   // ciano
+    [0.6, dark ? '#16a34a' : '#22c55e'],   // verde
+    [0.75,dark ? '#ca8a04' : '#eab308'],   // amarelo
+    [0.85,dark ? '#ea580c' : '#f97316'],   // laranja
+    [1.0, dark ? '#dc2626' : '#dc2626']    // quente: vermelho
+  ];
+  // Interpolar entre os stops
+  var i = 0;
+  while (i < stops.length - 2 && normalized > stops[i+1][0]) i++;
+  var t0 = stops[i][0], t1 = stops[i+1][0];
+  var f = t1 > t0 ? (normalized - t0) / (t1 - t0) : 0;
+  var c1 = stops[i][1], c2 = stops[i+1][1];
   var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
   var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
   var r=Math.round(r1+(r2-r1)*f),g=Math.round(g1+(g2-g1)*f),b=Math.round(b1+(b2-b1)*f);
@@ -801,7 +811,8 @@ function hideMapTip(){ getMapTip().style.opacity='0'; }
 function escDash(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;'); }
 
 function normalizeCity(s){
-  return String(s).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  // Remove acentos, maiúscula, trim — igual ao que o banco retorna
+  return String(s).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ');
 }
 
 async function loadGeoData(){
