@@ -200,7 +200,40 @@ app.get('/api/clients', async (req, res) => {
 
     const [rows] = await conn.execute(
       `SELECT * FROM (${union}) c WHERE contato_id IS NOT NULL ORDER BY totalSpent DESC`);
+
+    // Buscar emails e telefones de todas as fontes disponíveis
+    const [emailRows] = await conn.execute(`
+      SELECT contato_id,
+             MAX(contato_email)   AS email,
+             MAX(contato_telefone) AS telefone
+      FROM (
+        SELECT contato_id, contato_email, contato_telefone
+          FROM bling_nfe_saida_detalhes_ecommerce
+          WHERE contato_id IS NOT NULL AND contato_email IS NOT NULL AND contato_email != ''
+        UNION ALL
+        SELECT contato_id, contato_email, contato_telefone
+          FROM bling_nfe_saida_detalhes_distribuicao
+          WHERE contato_id IS NOT NULL AND contato_email IS NOT NULL AND contato_email != ''
+      ) nfe_emails
+      GROUP BY contato_id`);
+
+    // Buscar emails da Tray por ID
+    const [trayRows] = await conn.execute(`
+      SELECT id, email FROM clientes_tray_ecommerce WHERE email IS NOT NULL AND email != ''
+      UNION ALL
+      SELECT id, email FROM clientes_tray_distribuicao WHERE email IS NOT NULL AND email != ''`);
+
     conn.release();
+
+    // Montar mapas de lookup
+    const emailMap = new Map();
+    emailRows.forEach(r => {
+      if (r.contato_id) emailMap.set(String(r.contato_id), { email: r.email||null, telefone: r.telefone||null });
+    });
+    const trayMap = new Map();
+    trayRows.forEach(r => {
+      if (r.id && !trayMap.has(String(r.id))) trayMap.set(String(r.id), r.email||null);
+    });
 
     const map = new Map();
     rows.forEach(r => {
