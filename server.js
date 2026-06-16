@@ -660,13 +660,23 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     rows.forEach(r => {
       if (isNotClient(r.name)) return;
       const key = r.contato_id;
+      const ci2 = eMap2.get(String(key)) || {};
+      const te2 = tMap2.get(String(key)) || null;
       if (!map.has(key)) {
         map.set(key, {
           id: key, name: r.name,
           cpf: r.cpf || null,
+          email: ci2.email || te2 || null,
+          telefone: ci2.telefone || null,
           city: r.city, state: r.stateUF || r.state,
           orderCount: parseInt(r.orders)||0,
           totalSpent: parseFloat(r.spent)||0,
+          firstDate: safeDate(r.firstDate),
+          lastDate: safeDate(r.lastDate),
+          daysSince: r.lastDate ? Math.floor((Date.now()-new Date(r.lastDate))/86400000) : null,
+          businessUnit: r.origem
+        });
+      } else {
           firstDate: safeDate(r.firstDate),
           lastDate: safeDate(r.lastDate),
           daysSince: r.lastDate ? Math.floor((Date.now()-new Date(r.lastDate))/86400000) : null,
