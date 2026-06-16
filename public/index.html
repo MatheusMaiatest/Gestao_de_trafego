@@ -626,7 +626,7 @@ async function loadDash(){
   const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
   if(!s||!e) return;
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
-  const btnDash=document.querySelector('#tab-dashboard .btn-search');
+  saveFilters();
   if(btnDash){btnDash.disabled=true;btnDash.textContent='⏳ Buscando...';}
   const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
   renderKPISkel('d-kpis');
