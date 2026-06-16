@@ -297,7 +297,12 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
       <button class="btn-search" onclick="loadClientes()">🔍 Buscar</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <input type="text" id="c-search" class="search-input" placeholder="Buscar por nome, CPF ou nº pedido..."/>
+      <div style="position:relative;flex:1;min-width:200px;">
+        <input type="text" id="c-search" class="search-input" placeholder="Buscar por nome, CPF ou nº pedido..." style="width:100%;padding-right:32px;"/>
+        <button onclick="document.getElementById('c-search').value='';document.getElementById('c-search').dispatchEvent(new Event('input'))"
+          style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--tm);cursor:pointer;font-size:1rem;line-height:1;"
+          title="Limpar pesquisa">✕</button>
+      </div>
       <span id="c-count" style="font-size:.72rem;color:var(--tm);margin-left:auto"></span>
     </div>
     <div class="table-wrap" id="c-table-wrap">
