@@ -677,12 +677,6 @@ app.get('/api/segments/:type/customers', async (req, res) => {
           businessUnit: r.origem
         });
       } else {
-          firstDate: safeDate(r.firstDate),
-          lastDate: safeDate(r.lastDate),
-          daysSince: r.lastDate ? Math.floor((Date.now()-new Date(r.lastDate))/86400000) : null,
-          businessUnit: r.origem
-        });
-      } else {
         const ex = map.get(key);
         ex.orderCount += parseInt(r.orders)||0;
         ex.totalSpent += parseFloat(r.spent)||0;
