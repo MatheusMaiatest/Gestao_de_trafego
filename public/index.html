@@ -1500,6 +1500,9 @@ async function loadDisparo(){
   const seg=document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo';
   const bu=document.getElementById('dm-bu').value;
   if(!s||!e){alert('Selecione o período');return;}
+  if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  const btnDm=document.querySelector('#tab-disparo .btn-search');
+  if(btnDm){btnDm.disabled=true;btnDm.textContent='⏳ Buscando...';}
   document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
   try{
     const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
@@ -1514,6 +1517,8 @@ async function loadDisparo(){
     ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
   }catch(err){
     document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="10" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
+  } finally {
+    if(btnDm){btnDm.disabled=false;btnDm.textContent='🔍 Buscar';}
   }
 }
 
