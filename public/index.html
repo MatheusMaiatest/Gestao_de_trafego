@@ -540,49 +540,18 @@ let GEO_DATA=null;
 
 
 // INIT DATES
-// ── Persistência de filtros no sessionStorage ──────────────
-const FILTER_KEY = 'ic_filters';
-function saveFilters(){
-  const f={
-    ds: document.getElementById('d-s')?.value,
-    de: document.getElementById('d-e')?.value,
-    dbu: dBU,
-    cs: document.getElementById('c-s')?.value,
-    ce: document.getElementById('c-e')?.value,
-    cbu: cBU,
-    rs: document.getElementById('r-s')?.value,
-    re: document.getElementById('r-e')?.value,
-    rbu: document.getElementById('r-bu')?.value,
-    dms: document.getElementById('dm-s')?.value,
-    dme: document.getElementById('dm-e')?.value
-  };
-  try { sessionStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch(e){}
-}
-function loadFilters(){
-  try {
-    const raw = sessionStorage.getItem(FILTER_KEY);
-    if(!raw) return false;
-    const f = JSON.parse(raw);
-    const set = (id, v) => { const el=document.getElementById(id); if(el&&v) el.value=v; };
-    set('d-s', f.ds); set('d-e', f.de);
-    set('c-s', f.cs); set('c-e', f.ce);
-    set('r-s', f.rs); set('r-e', f.re);
-    set('r-bu', f.rbu);
-    set('dm-s', f.dms); set('dm-e', f.dme);
-    if(f.dbu){ dBU=f.dbu; document.querySelectorAll('#tab-dashboard .ubtn').forEach(b=>{ b.classList.toggle('active', b.dataset.bu===f.dbu); }); }
-    if(f.cbu){ cBU=f.cbu; document.querySelectorAll('#tab-clientes .ubtn').forEach(b=>{ b.classList.toggle('active', b.dataset.bu===f.cbu); }); }
-    return true;
-  } catch(e){ return false; }
-}
-
 function initDates(){
-  // Tentar restaurar filtros salvos; se não, usar padrão 30 dias
-  if(loadFilters()) return;
-  const now=new Date(),end=now.toISOString().slice(0,10);
-  const start=new Date(now-30*86400000).toISOString().slice(0,10);
+  // Limpar qualquer filtro salvo — começar sempre com campos vazios
+  try { sessionStorage.removeItem('ic_filters'); } catch(e){}
+  // Não preencher datas por padrão — usuário preenche manualmente
   ['d-s','d-e','c-s','c-e','r-s','r-e','dm-s','dm-e'].forEach(id=>{
     const el=document.getElementById(id);
-    if(el) el.value=id.endsWith('-s')?start:end;
+    if(el) el.value='';
+  });
+  // Resetar unidades de negócio para "Todos"
+  dBU='all'; cBU='all';
+  document.querySelectorAll('.ubtn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.bu==='all');
   });
 }
 
@@ -770,39 +739,37 @@ function calcularFaixas(valores, numFaixas) {
 }
 
 function getHeatColorEx(value, min, max, dark) {
-  if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
-  if (max <= min) return dark ? '#1e3a5f' : '#3b82f6';
+  if (!value || value === 0) return dark ? '#1a1d27' : '#eef0f5';
+  if (max <= min) return '#b71c1c';
 
-  // Usar escala logarítmica para maximizar contraste entre valores extremos
+  // Escala logarítmica — comprime valores altos, expande os baixos para melhor contraste
   var logMin = Math.log1p(min);
   var logMax = Math.log1p(max);
   var logVal = Math.log1p(value);
-  var normalized = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
-  normalized = Math.max(0, Math.min(1, normalized));
+  var t = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
+  t = Math.max(0, Math.min(1, t));
 
-  // Escala de 7 stops: azul muito escuro → azul → ciano → verde → amarelo → laranja → vermelho
-  var stops = dark ? [
-    [0,    '#050d1a'],  // frio total: quase preto azulado
-    [0.15, '#0d2461'],  // azul marinho
-    [0.30, '#1565c0'],  // azul
-    [0.50, '#0097a7'],  // ciano
-    [0.65, '#2e7d32'],  // verde
-    [0.80, '#f57f17'],  // amarelo/laranja
-    [1.0,  '#b71c1c']   // vermelho quente
-  ] : [
-    [0,    '#e3f2fd'],  // azul clarinho
-    [0.15, '#90caf9'],  // azul claro
-    [0.30, '#1976d2'],  // azul médio
-    [0.50, '#00acc1'],  // ciano
-    [0.65, '#43a047'],  // verde
-    [0.80, '#fb8c00'],  // laranja
-    [1.0,  '#c62828']   // vermelho
+  // 12 nuances: verde vivo → amarelo-verde → amarelo → âmbar → laranja claro
+  //             → laranja → laranja-vermelho → vermelho médio → vermelho → vermelho escuro → bordô
+  var stops = [
+    [0.00, '#43a832'],  // verde vivo
+    [0.08, '#76c442'],  // verde claro
+    [0.17, '#a8d832'],  // verde-amarelo
+    [0.25, '#d4e832'],  // amarelo-verde
+    [0.33, '#f5e642'],  // amarelo
+    [0.42, '#f5c842'],  // âmbar claro
+    [0.50, '#f5a532'],  // âmbar
+    [0.60, '#f58020'],  // laranja
+    [0.70, '#f56010'],  // laranja-vermelho
+    [0.80, '#e83020'],  // vermelho médio
+    [0.90, '#cc1010'],  // vermelho
+    [1.00, '#7f0000']   // bordô escuro (máximo)
   ];
 
   var i = 0;
-  while (i < stops.length - 2 && normalized > stops[i+1][0]) i++;
+  while (i < stops.length - 2 && t > stops[i+1][0]) i++;
   var t0 = stops[i][0], t1 = stops[i+1][0];
-  var f = t1 > t0 ? (normalized - t0) / (t1 - t0) : 0;
+  var f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
   var c1 = stops[i][1], c2 = stops[i+1][1];
   var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
   var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
