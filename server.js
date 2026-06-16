@@ -635,7 +635,26 @@ app.get('/api/segments/:type/customers', async (req, res) => {
 
     const [rows] = await conn.execute(
       `SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
+
+    // Buscar emails e telefones via NF-e
+    const [emailRows2] = await conn.execute(`
+      SELECT contato_id, MAX(contato_email) AS email, MAX(contato_telefone) AS telefone
+      FROM (
+        SELECT contato_id, contato_email, contato_telefone FROM bling_nfe_saida_detalhes_ecommerce
+        WHERE contato_id IS NOT NULL AND contato_email IS NOT NULL AND contato_email != ''
+        UNION ALL
+        SELECT contato_id, contato_email, contato_telefone FROM bling_nfe_saida_detalhes_distribuicao
+        WHERE contato_id IS NOT NULL AND contato_email IS NOT NULL AND contato_email != ''
+      ) t GROUP BY contato_id`);
+    const [trayRows2] = await conn.execute(`
+      SELECT id, email FROM clientes_tray_ecommerce WHERE email IS NOT NULL AND email != ''
+      UNION ALL SELECT id, email FROM clientes_tray_distribuicao WHERE email IS NOT NULL AND email != ''`);
     conn.release();
+
+    const eMap2 = new Map();
+    emailRows2.forEach(r => eMap2.set(String(r.contato_id), { email:r.email||null, telefone:r.telefone||null }));
+    const tMap2 = new Map();
+    trayRows2.forEach(r => { if(r.id && !tMap2.has(String(r.id))) tMap2.set(String(r.id), r.email||null); });
 
     const map = new Map();
     rows.forEach(r => {
