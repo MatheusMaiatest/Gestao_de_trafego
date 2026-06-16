@@ -783,14 +783,42 @@ function getHeatColorEx(value, min, max, dark) {
 function getHeatColorByRank(value, sortedValues, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
-  // Encontrar posição no array ordenado
+  // Encontrar posição no array ordenado (rank)
   var idx = 0;
   for (var k = 0; k < sortedValues.length; k++) {
     if (sortedValues[k] <= value) idx = k;
     else break;
   }
+  // t vai de 0 (menor valor) a 1 (maior valor) linearmente pelo rank
   var t = sortedValues.length > 1 ? idx / (sortedValues.length - 1) : 1;
-  return getHeatColorEx(t * 1000, 0, 1000, dark); // mapear t em escala 0-1000
+  t = Math.max(0, Math.min(1, t));
+  // Mapear diretamente na paleta de 14 cores — sem passar por outra escala
+  var stops = [
+    [0.000, '#39b54a'],
+    [0.077, '#5dc13a'],
+    [0.154, '#85cc2a'],
+    [0.231, '#b0d820'],
+    [0.308, '#d8e015'],
+    [0.385, '#f0d800'],
+    [0.462, '#f5b800'],
+    [0.538, '#f59200'],
+    [0.615, '#f56e00'],
+    [0.692, '#f04800'],
+    [0.769, '#e82800'],
+    [0.846, '#d41010'],
+    [0.923, '#aa0808'],
+    [1.000, '#6b0000']
+  ];
+  var i = 0;
+  while (i < stops.length - 2 && t > stops[i+1][0]) i++;
+  var t0 = stops[i][0], t1 = stops[i+1][0];
+  var f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+  f = Math.max(0, Math.min(1, f));
+  var c1 = stops[i][1], c2 = stops[i+1][1];
+  var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
+  var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
+  var r=Math.round(r1+(r2-r1)*f),g=Math.round(g1+(g2-g1)*f),b=Math.round(b1+(b2-b1)*f);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
 }
 
 function renderLegendaEx(elementId, faixas, min, max, dark, formatFn) {
