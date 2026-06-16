@@ -811,32 +811,21 @@ app.get('/api/geolocation/states', async (req, res) => {
   try {
     const conn = await pool.getConnection();
 
-    // Usar NF-e como fonte primária — tem município/UF mais confiável
-    // UNION entre ecommerce e distribuição baseado em businessUnit
-    const nfeEco  = `SELECT
-        NULLIF(TRIM(transporte_etiqueta_uf),'') AS state,
-        contato_id, x_total_icmstot_vnf AS valor
-      FROM bling_nfe_saida_detalhes_ecommerce
-      WHERE DATE(dataemissao) BETWEEN '${startDate}' AND '${endDate}'
-        AND situacao IN (100,101,135)`;
-
-    const nfeDist = `SELECT
-        NULLIF(TRIM(transporte_etiqueta_uf),'') AS state,
-        contato_id, x_total_icmstot_vnf AS valor
-      FROM bling_nfe_saida_detalhes_distribuicao
-      WHERE DATE(dataemissao) BETWEEN '${startDate}' AND '${endDate}'
-        AND situacao IN (100,101,135)`;
-
-    const nfeUnion = bu==='ecommerce' ? nfeEco
-                   : bu==='distributor'||bu==='distribuidor' ? nfeDist
-                   : `(${nfeEco}) UNION ALL (${nfeDist})`;
+    // Usar pedidos de venda — fonte primária com cidade/UF confiável
+    // Combina transporte_etiqueta_uf (preferido) com kdd_cliente_estado (fallback)
+    const union = unionSQL(bu,
+      `COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) AS state,
+       contato_id,
+       total`,
+      `WHERE data BETWEEN '${startDate}' AND '${endDate}'
+       AND COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) IS NOT NULL`);
 
     const [rows] = await conn.execute(`
       SELECT state,
              COUNT(DISTINCT contato_id) AS customers,
-             COALESCE(SUM(valor),0) AS revenue,
-             COUNT(*) AS orders
-      FROM (${nfeUnion}) t
+             COALESCE(SUM(total),0)     AS revenue,
+             COUNT(*)                   AS orders
+      FROM (${union}) t
       WHERE state IS NOT NULL AND state != ''
       GROUP BY state`);
     conn.release();
@@ -844,7 +833,7 @@ app.get('/api/geolocation/states', async (req, res) => {
     const map = new Map();
     rows.forEach(r => {
       const uf = normalizeUF(r.state);
-      if (!uf) return;
+      if (!uf || uf.length !== 2) return;
       if (!map.has(uf)) map.set(uf, { location:uf, customerCount:0, totalRevenue:0, orderCount:0 });
       const ex = map.get(uf);
       ex.customerCount += parseInt(r.customers)||0;
@@ -868,56 +857,40 @@ app.get('/api/geolocation/cities', async (req, res) => {
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
 
   const stateList = states ? states.split(',').map(s => normalizeUF(s.trim())).filter(Boolean) : [];
-  const stateFilter = stateList.length
-    ? `AND NULLIF(TRIM(transporte_etiqueta_uf),'') IN ('${stateList.join("','")}')`
+  const ufFilter  = stateList.length
+    ? `AND COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) IN ('${stateList.join("','")}')`
     : '';
 
   try {
     const conn = await pool.getConnection();
 
-    // Usar NF-e — tem cidade/UF exata do destinatário
-    const nfeEco  = `SELECT
-        TRIM(transporte_etiqueta_municipio) AS city,
-        NULLIF(TRIM(transporte_etiqueta_uf),'') AS state,
-        contato_id, x_total_icmstot_vnf AS valor
-      FROM bling_nfe_saida_detalhes_ecommerce
-      WHERE DATE(dataemissao) BETWEEN '${startDate}' AND '${endDate}'
-        AND situacao IN (100,101,135)
-        AND transporte_etiqueta_municipio IS NOT NULL
-        AND transporte_etiqueta_municipio != ''
-        ${stateFilter}`;
-
-    const nfeDist = `SELECT
-        TRIM(transporte_etiqueta_municipio) AS city,
-        NULLIF(TRIM(transporte_etiqueta_uf),'') AS state,
-        contato_id, x_total_icmstot_vnf AS valor
-      FROM bling_nfe_saida_detalhes_distribuicao
-      WHERE DATE(dataemissao) BETWEEN '${startDate}' AND '${endDate}'
-        AND situacao IN (100,101,135)
-        AND transporte_etiqueta_municipio IS NOT NULL
-        AND transporte_etiqueta_municipio != ''
-        ${stateFilter}`;
-
-    const nfeUnion = bu==='ecommerce' ? nfeEco
-                   : bu==='distributor'||bu==='distribuidor' ? nfeDist
-                   : `(${nfeEco}) UNION ALL (${nfeDist})`;
+    // Usar pedidos de venda — transporte_etiqueta_municipio tem o município real
+    const union = unionSQL(bu,
+      `TRIM(transporte_etiqueta_municipio) AS city,
+       COALESCE(NULLIF(TRIM(transporte_etiqueta_uf),''), NULLIF(TRIM(kdd_cliente_estado),'')) AS state,
+       contato_id,
+       total`,
+      `WHERE data BETWEEN '${startDate}' AND '${endDate}'
+       AND transporte_etiqueta_municipio IS NOT NULL
+       AND TRIM(transporte_etiqueta_municipio) != ''
+       ${ufFilter}`);
 
     const [rows] = await conn.execute(`
       SELECT city, state,
              COUNT(DISTINCT contato_id) AS customers,
-             COALESCE(SUM(valor),0) AS revenue,
-             COUNT(*) AS orders
-      FROM (${nfeUnion}) t
+             COALESCE(SUM(total),0)     AS revenue,
+             COUNT(*)                   AS orders
+      FROM (${union}) t
       WHERE city IS NOT NULL AND city != ''
       GROUP BY city, state`);
     conn.release();
 
     const map = new Map();
     rows.forEach(r => {
-      const uf   = normalizeUF(r.state);
+      const uf   = normalizeUF(r.state) || '';
       const city = (r.city||'').trim();
       if (!city) return;
-      const k = `${city}/${uf||''}`;
+      const k = `${city}/${uf}`;
       if (!map.has(k)) map.set(k, { location:k, city, state:uf||r.state||'', customerCount:0, totalRevenue:0, orderCount:0 });
       const ex = map.get(k);
       ex.customerCount += parseInt(r.customers)||0;
