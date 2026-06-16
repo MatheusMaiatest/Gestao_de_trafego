@@ -596,7 +596,6 @@ async function loadDash(){
   const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
   if(!s||!e) return;
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
-  saveFilters();
   const btnDash=document.querySelector('#tab-dashboard .btn-search');
   if(btnDash){btnDash.disabled=true;btnDash.textContent='⏳ Buscando...';}
   const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
@@ -739,37 +738,43 @@ function calcularFaixas(valores, numFaixas) {
 }
 
 function getHeatColorEx(value, min, max, dark) {
-  if (!value || value === 0) return dark ? '#1a1d27' : '#eef0f5';
-  if (max <= min) return '#b71c1c';
+  if (!value || value === 0) return dark ? '#1a1d27' : '#f0f0f0';
+  if (max <= min) return '#8b0000';
 
-  // Escala logarítmica — comprime valores altos, expande os baixos para melhor contraste
-  var logMin = Math.log1p(min);
-  var logMax = Math.log1p(max);
-  var logVal = Math.log1p(value);
-  var t = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
+  // Escala por raiz cúbica — distribui cores proporcionalmente,
+  // dando mais "espaço" para valores medianos e altos (maioria fica quente)
+  var cbMin = Math.pow(min || 0, 1/3);
+  var cbMax = Math.pow(max, 1/3);
+  var cbVal = Math.pow(value, 1/3);
+  var t = cbMax > cbMin ? (cbVal - cbMin) / (cbMax - cbMin) : 0;
   t = Math.max(0, Math.min(1, t));
 
-  // 12 nuances: verde vivo → amarelo-verde → amarelo → âmbar → laranja claro
-  //             → laranja → laranja-vermelho → vermelho médio → vermelho → vermelho escuro → bordô
+  // Escala idêntica à imagem de referência com 14 nuances:
+  // verde vivo → verde-limão → amarelo-esverdeado → amarelo → amarelo-laranja
+  // → âmbar → laranja → laranja-forte → laranja-vermelho → vermelho claro
+  // → vermelho → vermelho vivo → vermelho escuro → bordô
   var stops = [
-    [0.00, '#43a832'],  // verde vivo
-    [0.08, '#76c442'],  // verde claro
-    [0.17, '#a8d832'],  // verde-amarelo
-    [0.25, '#d4e832'],  // amarelo-verde
-    [0.33, '#f5e642'],  // amarelo
-    [0.42, '#f5c842'],  // âmbar claro
-    [0.50, '#f5a532'],  // âmbar
-    [0.60, '#f58020'],  // laranja
-    [0.70, '#f56010'],  // laranja-vermelho
-    [0.80, '#e83020'],  // vermelho médio
-    [0.90, '#cc1010'],  // vermelho
-    [1.00, '#7f0000']   // bordô escuro (máximo)
+    [0.000, '#39b54a'],  // verde vivo
+    [0.075, '#5dc13a'],  // verde médio
+    [0.150, '#85cc2a'],  // verde-limão
+    [0.225, '#b0d820'],  // amarelo-esverdeado
+    [0.300, '#d8e015'],  // amarelo-verde
+    [0.375, '#f0d800'],  // amarelo puro
+    [0.450, '#f5b800'],  // amarelo-âmbar
+    [0.525, '#f59200'],  // âmbar
+    [0.600, '#f56e00'],  // laranja
+    [0.675, '#f04800'],  // laranja-vermelho
+    [0.750, '#e82800'],  // vermelho-laranja
+    [0.825, '#d41010'],  // vermelho
+    [0.912, '#aa0808'],  // vermelho escuro
+    [1.000, '#6b0000']   // bordô (máximo)
   ];
 
   var i = 0;
   while (i < stops.length - 2 && t > stops[i+1][0]) i++;
   var t0 = stops[i][0], t1 = stops[i+1][0];
   var f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+  f = Math.max(0, Math.min(1, f));
   var c1 = stops[i][1], c2 = stops[i+1][1];
   var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
   var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
@@ -1233,7 +1238,6 @@ async function loadClientes(){
   const search=document.getElementById('c-search').value.trim();
   if(!s||!e) return;
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
-  saveFilters();
   const btnC=document.querySelector('#tab-clientes .btn-search');
   if(btnC){btnC.disabled=true;btnC.textContent='⏳ Buscando...';}
   document.getElementById('c-tbody').innerHTML='<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
@@ -1561,7 +1565,6 @@ async function loadDisparo(){
   const bu=document.getElementById('dm-bu').value;
   if(!s||!e){alert('Selecione o período');return;}
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
-  saveFilters();
   const btnDm=document.querySelector('#tab-disparo .btn-search');
   if(btnDm){btnDm.disabled=true;btnDm.textContent='⏳ Buscando...';}
   document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
