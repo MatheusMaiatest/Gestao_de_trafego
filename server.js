@@ -721,8 +721,18 @@ app.get('/api/rfm/distribution', async (req, res) => {
 // ── PRODUTOS ──────────────────────────────────────────────────
 app.get('/api/products/top-selling', async (req, res) => {
   const { orderBy='quantity', limit=20, businessUnit:bu='all', startDate, endDate } = req.query;
+
+  // Tentar descobrir o nome da coluna de descrição dinamicamente
+  // Colunas candidatas em tabelas Bling: itens_descricao, itens_produto, itens_nome, itens_descrprod
+  const descCol = `COALESCE(
+    NULLIF(TRIM(itens_descricao),''),
+    NULLIF(TRIM(itens_produto),''),
+    NULLIF(TRIM(itens_nome),''),
+    itens_codigo
+  )`;
+
   const cols = `itens_codigo AS code,
-                MAX(itens_descricao) AS name_raw,
+                MAX(${descCol}) AS name_raw,
                 SUM(itens_quantidade) AS qty,
                 SUM(itens_valor*itens_quantidade) AS revenue,
                 COUNT(DISTINCT pedido_venda_id) AS orders`;
@@ -736,7 +746,27 @@ app.get('/api/products/top-selling', async (req, res) => {
 
   try {
     const conn = await pool.getConnection();
-    const [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE code IS NOT NULL`);
+
+    // Primeira tentativa com colunas de descrição
+    let rows;
+    try {
+      [rows] = await conn.execute(`SELECT * FROM (${union}) t WHERE code IS NOT NULL`);
+    } catch (colErr) {
+      // Fallback: se nenhuma coluna de descrição existir, usa só o código
+      logger.warn('products col fallback: ' + colErr.message);
+      const colsSimple = `itens_codigo AS code,
+                          itens_codigo AS name_raw,
+                          SUM(itens_quantidade) AS qty,
+                          SUM(itens_valor*itens_quantidade) AS revenue,
+                          COUNT(DISTINCT pedido_venda_id) AS orders`;
+      const whereSimple = startDate && endDate
+        ? `WHERE pedido_data BETWEEN '${startDate}' AND '${endDate}' GROUP BY itens_codigo`
+        : 'GROUP BY itens_codigo';
+      const ecoS  = `SELECT ${colsSimple}, 'ecommerce' AS origem FROM bling_pedidos_venda_detalhes_itens_ecommerce ${whereSimple}`;
+      const distS = `SELECT ${colsSimple}, 'distribuicao' AS origem FROM bling_pedidos_venda_detalhes_itens_distribuicao ${whereSimple}`;
+      const unionS = bu==='ecommerce' ? ecoS : bu==='distributor'||bu==='distribuidor' ? distS : `(${ecoS}) UNION ALL (${distS})`;
+      [rows] = await conn.execute(`SELECT * FROM (${unionS}) t WHERE code IS NOT NULL`);
+    }
     conn.release();
 
     const map = new Map();
