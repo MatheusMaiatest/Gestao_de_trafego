@@ -582,6 +582,9 @@ function setBU(pfx,btn){
 async function loadDash(){
   const s=document.getElementById('d-s').value,e=document.getElementById('d-e').value;
   if(!s||!e) return;
+  if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  const btnDash=document.querySelector('#tab-dashboard .btn-search');
+  if(btnDash){btnDash.disabled=true;btnDash.textContent='⏳ Buscando...';}
   const q=`?startDate=${s}&endDate=${e}&businessUnit=${dBU}`;
   renderKPISkel('d-kpis');
   try {
@@ -594,11 +597,13 @@ async function loadDash(){
     renderDashKPIs(kpi,seg);
     mkChart('ch-rfm','doughnut',rfm.distribution||[],d=>d.segment,d=>d.customerCount,{rfm:true});
     mkChart('ch-seg','bar',(seg.segments||[]),d=>d.segment,d=>d.customerCount,{});
-    mkChart('ch-prod','bar',(prods.products||[]).slice(0,10),d=>d.code,d=>d.totalQty||0,{horiz:true});
+    mkChart('ch-prod','bar',(prods.products||[]).slice(0,10),d=>d.name||d.code,d=>d.totalQty||0,{horiz:true});
     if(GEO_DATA) { renderMapNF(geo.states||[]); renderMapFat(geo.states||[]); }
     else loadGeoData().then(()=>{renderMapNF(geo.states||[]);renderMapFat(geo.states||[]);});
   } catch(err){
     document.getElementById('d-kpis').innerHTML=`<div style="grid-column:1/-1;color:var(--err);padding:14px">❌ ${err.message}</div>`;
+  } finally {
+    if(btnDash){btnDash.disabled=false;btnDash.textContent='🔍 Buscar';}
   }
 }
 function renderKPISkel(id){
