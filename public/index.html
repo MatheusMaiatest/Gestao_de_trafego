@@ -738,36 +738,33 @@ function calcularFaixas(valores, numFaixas) {
 }
 
 function getHeatColorEx(value, min, max, dark) {
-  if (!value || value === 0) return dark ? '#1a1d27' : '#f0f0f0';
+function getHeatColorEx(value, min, max, dark) {
+  if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (max <= min) return '#8b0000';
 
-  // Escala por raiz cúbica — distribui cores proporcionalmente,
-  // dando mais "espaço" para valores medianos e altos (maioria fica quente)
-  var cbMin = Math.pow(min || 0, 1/3);
-  var cbMax = Math.pow(max, 1/3);
-  var cbVal = Math.pow(value, 1/3);
-  var t = cbMax > cbMin ? (cbVal - cbMin) / (cbMax - cbMin) : 0;
+  // Escala raiz quadrada dupla para melhor distribuição com outliers
+  var sqMin = Math.sqrt(Math.sqrt(Math.max(0, min)));
+  var sqMax = Math.sqrt(Math.sqrt(max));
+  var sqVal = Math.sqrt(Math.sqrt(value));
+  var t = sqMax > sqMin ? (sqVal - sqMin) / (sqMax - sqMin) : 0;
   t = Math.max(0, Math.min(1, t));
 
-  // Escala idêntica à imagem de referência com 14 nuances:
-  // verde vivo → verde-limão → amarelo-esverdeado → amarelo → amarelo-laranja
-  // → âmbar → laranja → laranja-forte → laranja-vermelho → vermelho claro
-  // → vermelho → vermelho vivo → vermelho escuro → bordô
+  // 14 nuances: verde → amarelo → laranja → vermelho → bordô
   var stops = [
-    [0.000, '#39b54a'],  // verde vivo
-    [0.075, '#5dc13a'],  // verde médio
-    [0.150, '#85cc2a'],  // verde-limão
-    [0.225, '#b0d820'],  // amarelo-esverdeado
-    [0.300, '#d8e015'],  // amarelo-verde
-    [0.375, '#f0d800'],  // amarelo puro
-    [0.450, '#f5b800'],  // amarelo-âmbar
-    [0.525, '#f59200'],  // âmbar
-    [0.600, '#f56e00'],  // laranja
-    [0.675, '#f04800'],  // laranja-vermelho
-    [0.750, '#e82800'],  // vermelho-laranja
-    [0.825, '#d41010'],  // vermelho
-    [0.912, '#aa0808'],  // vermelho escuro
-    [1.000, '#6b0000']   // bordô (máximo)
+    [0.000, '#39b54a'],
+    [0.075, '#5dc13a'],
+    [0.150, '#85cc2a'],
+    [0.225, '#b0d820'],
+    [0.300, '#d8e015'],
+    [0.375, '#f0d800'],
+    [0.450, '#f5b800'],
+    [0.525, '#f59200'],
+    [0.600, '#f56e00'],
+    [0.675, '#f04800'],
+    [0.750, '#e82800'],
+    [0.825, '#d41010'],
+    [0.912, '#aa0808'],
+    [1.000, '#6b0000']
   ];
 
   var i = 0;
@@ -780,6 +777,21 @@ function getHeatColorEx(value, min, max, dark) {
   var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
   var r=Math.round(r1+(r2-r1)*f),g=Math.round(g1+(g2-g1)*f),b=Math.round(b1+(b2-b1)*f);
   return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
+
+// Versão por rank — usa posição no array ordenado para garantir distribuição uniforme de cores
+// Isso é o que faz o contraste ser máximo independente dos valores absolutos
+function getHeatColorByRank(value, sortedValues, dark) {
+  if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+  if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
+  // Encontrar posição no array ordenado
+  var idx = 0;
+  for (var k = 0; k < sortedValues.length; k++) {
+    if (sortedValues[k] <= value) idx = k;
+    else break;
+  }
+  var t = sortedValues.length > 1 ? idx / (sortedValues.length - 1) : 1;
+  return getHeatColorEx(t * 1000, 0, 1000, dark); // mapear t em escala 0-1000
 }
 
 function renderLegendaEx(elementId, faixas, min, max, dark, formatFn) {
@@ -866,16 +878,11 @@ function renderMapNF(states){
   var faixas = calcularFaixas(valores, 5);
   renderLegendaEx('leg-nf', faixas, minC, maxC, dark, null);
 
+  var sortedNF = valores.slice().sort(function(a,b){return a-b;});
   var getColor = function(value) {
-    if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
-    return getHeatColorEx(value, minC, maxC, dark);
+    if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+    return getHeatColorByRank(value, sortedNF, dark);
   };
-
-  var W=460,H=400;
-  var proj=brazilProjection(W,H);
-  var path=d3.geoPath().projection(proj);
-
-  var svg=d3.select('#svg-nf');
   svg.selectAll('*').remove();
   svg.attr('viewBox','0 0 '+W+' '+H).style('display','block');
   var el=document.getElementById('ml-nf'); if(el) el.style.display='none';
@@ -914,9 +921,10 @@ function renderMapFat(states){
   var faixas = calcularFaixas(valores, 5);
   renderLegendaEx('leg-fat', faixas, minF, maxF, dark, function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); });
 
+  var sortedFat = valores.slice().sort(function(a,b){return a-b;});
   var getColor = function(value) {
-    if (!value || value === 0) return dark ? '#0d1117' : '#f0f2f8';
-    return getHeatColorEx(value, minF, maxF, dark);
+    if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+    return getHeatColorByRank(value, sortedFat, dark);
   };
 
   var W=460,H=400;
@@ -1043,14 +1051,16 @@ function renderDrillMap(geo, uf, stateName, mode) {
       var valores = cities.map(function(c){ return useVal?c.totalRevenue:c.customerCount; }).filter(function(v){ return v>0; });
       var minVal = valores.length>0?Math.min.apply(null,valores):0;
       var maxVal = valores.length>0?Math.max.apply(null,valores):1;
+      // Array ordenado para escala por rank — distribui cores uniformemente ignorando outliers
+      var sortedVals = valores.slice().sort(function(a,b){return a-b;});
 
       var faixas = calcularFaixas(valores, 5);
       var formatFn = useVal ? function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); } : null;
       renderLegendaEx('drill-legend-'+mode, faixas, minVal, maxVal, dark, formatFn);
 
       var getColor = function(value) {
-        if (!value || value === 0) return dark ? '#161922' : '#edf2f7';
-        return getHeatColorEx(value, minVal, maxVal, dark);
+        if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+        return getHeatColorByRank(value, sortedVals, dark);
       };
 
       var svgEl = document.getElementById(svgDrillId);
