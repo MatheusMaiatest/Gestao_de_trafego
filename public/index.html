@@ -1234,6 +1234,8 @@ async function loadClientes(){
     if(btnC){btnC.disabled=false;btnC.textContent='🔍 Buscar';}
   }
 }
+
+function applyColFilters(data){
   return data.filter(c=>{
     return Object.entries(colFilters).every(([k,set])=>{
       if(!set||set.size===0) return true;
