@@ -616,7 +616,7 @@ function renderDashKPIs(kpi,seg){
     {l:'Novos Clientes',v:fmtN(kpi.newClients),c:'eco'},
     {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
     {l:'Freq. de Compra',v:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x',c:''},
-    {l:'Clientes Inativos',v:fmtN(risco),c:'warn'},
+    {l:'Clientes Em Risco',v:fmtN(risco),c:'warn'},
   ];
   document.getElementById('d-kpis').innerHTML=ks.map(k=>
     `<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
@@ -682,7 +682,7 @@ async function openChartModal(type){
 }
 
 // ── MAPAS D3 — idêntico ao exemplo.html ──────────────────────
-var MAP_GEO_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson';
+var MAP_GEO_URL = '/brazil-states.geojson';
 var UF_IBGE_CODES = {AC:'12',AL:'27',AM:'13',AP:'16',BA:'29',CE:'23',DF:'53',ES:'32',GO:'52',MA:'21',MG:'31',MS:'50',MT:'51',PA:'15',PB:'25',PE:'26',PI:'22',PR:'41',RJ:'33',RN:'24',RO:'11',RR:'14',RS:'43',SC:'42',SE:'28',SP:'35',TO:'17'};
 var _drillGeoCache = {};
 var _drillCurrentUF = null;
@@ -1268,21 +1268,34 @@ function sortC(key){
   cPage=1;buildHeader();renderClienteTable();
 }
 
-function renderPag(id,cur,total,cb){
-  const el=document.getElementById(id);if(total<=1){el.innerHTML='';return;}
-  const pgs=[];
-  if(cur>1) pgs.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur-1})">‹</button>`);
-  if(total<=7){for(let i=1;i<=total;i++) pgs.push(`<button class="pag-btn${i===cur?' active':''}" onclick="(${cb.toString()})(${i})">${i}</button>`);}
-  else {
-    pgs.push(`<button class="pag-btn${cur===1?' active':''}" onclick="(${cb.toString()})(1)">1</button>`);
-    if(cur>3) pgs.push('<span class="pag-info">…</span>');
-    for(let i=Math.max(2,cur-1);i<=Math.min(total-1,cur+1);i++) pgs.push(`<button class="pag-btn${i===cur?' active':''}" onclick="(${cb.toString()})(${i})">${i}</button>`);
-    if(cur<total-2) pgs.push('<span class="pag-info">…</span>');
-    pgs.push(`<button class="pag-btn${cur===total?' active':''}" onclick="(${cb.toString()})(${total})">${total}</button>`);
+function renderPag(id, cur, total, cb) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (total <= 1) { el.innerHTML = ''; return; }
+
+  const pgs = [];
+  if (cur > 1) pgs.push(`<button class="pag-btn" data-page="${cur-1}">‹</button>`);
+
+  if (total <= 7) {
+    for (let i = 1; i <= total; i++)
+      pgs.push(`<button class="pag-btn${i===cur?' active':''}" data-page="${i}">${i}</button>`);
+  } else {
+    pgs.push(`<button class="pag-btn${cur===1?' active':''}" data-page="1">1</button>`);
+    if (cur > 3) pgs.push('<span class="pag-info">…</span>');
+    for (let i = Math.max(2, cur-1); i <= Math.min(total-1, cur+1); i++)
+      pgs.push(`<button class="pag-btn${i===cur?' active':''}" data-page="${i}">${i}</button>`);
+    if (cur < total - 2) pgs.push('<span class="pag-info">…</span>');
+    pgs.push(`<button class="pag-btn${cur===total?' active':''}" data-page="${total}">${total}</button>`);
   }
-  if(cur<total) pgs.push(`<button class="pag-btn" onclick="(${cb.toString()})(${cur+1})">›</button>`);
+
+  if (cur < total) pgs.push(`<button class="pag-btn" data-page="${cur+1}">›</button>`);
   pgs.push(`<span class="pag-info">Pág ${cur} de ${total}</span>`);
-  el.innerHTML=pgs.join('');
+
+  el.innerHTML = pgs.join('');
+
+  el.querySelectorAll('.pag-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => cb(parseInt(btn.dataset.page)));
+  });
 }
 
 // MODAL CLIENTE
