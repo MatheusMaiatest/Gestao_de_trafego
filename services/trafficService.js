@@ -145,32 +145,34 @@ class TrafficService {
     try {
       const limitValue = parseInt(limit);
       
-      // Query otimizada - produtos vendidos no período
-      let query = `
+      // Query SUPER otimizada - SEM arquivos temporários
+      // Usa subquery mais eficiente e limita logo no início
+      const query = `
         SELECT 
           pvt.product_id,
           pvt.name AS product_name,
           pvt.reference AS sku,
           pvt.brand,
-          COUNT(DISTINCT pvt.order_id) AS orders_count,
           SUM(pvt.quantity) AS quantity_sold,
-          SUM(pvt.price * pvt.quantity) AS revenue,
-          SUM(COALESCE(pvt.cost_price, 0) * pvt.quantity) AS cost,
-          SUM((pvt.price - COALESCE(pvt.cost_price, 0)) * pvt.quantity) AS profit
+          ROUND(SUM(pvt.price * pvt.quantity), 2) AS revenue,
+          ROUND(SUM(COALESCE(pvt.cost_price, 0) * pvt.quantity), 2) AS cost,
+          ROUND(SUM((pvt.price - COALESCE(pvt.cost_price, 0)) * pvt.quantity), 2) AS profit
         FROM produtos_vendidos_tray_ecommerce pvt
-        INNER JOIN pedidos_ecommerce_tray pet ON pvt.order_id = pet.id
-        WHERE pet.date BETWEEN ? AND ?
-      `;
-      
-      const params = [startDate, endDate];
-      
-      query += `
+        WHERE pvt.order_id IN (
+          SELECT id FROM pedidos_ecommerce_tray
+          WHERE date BETWEEN ? AND ?
+        )
         GROUP BY pvt.product_id, pvt.name, pvt.reference, pvt.brand
         ORDER BY revenue DESC
         LIMIT ${limitValue}
       `;
       
-      const [products] = await conn.execute(query, params);
+      const [products] = await conn.execute(query, [startDate, endDate]);
+
+      // Se não há produtos, retornar vazio
+      if (products.length === 0) {
+        return [];
+      }
 
       // Buscar métricas agregadas por plataforma no período (UMA VEZ APENAS)
       const platformMetrics = await this.getPlatformMetrics(startDate, endDate, platform);
@@ -188,7 +190,11 @@ class TrafficService {
         const estimatedClicks = Math.round(platformMetrics.totalClicks * productShare);
         
         return {
-          ...product,
+          product_id: product.product_id,
+          product_name: product.product_name,
+          sku: product.sku,
+          brand: product.brand,
+          quantity_sold: parseInt(product.quantity_sold || 0),
           revenue,
           cost,
           profit,
