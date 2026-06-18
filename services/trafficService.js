@@ -145,7 +145,7 @@ class TrafficService {
     try {
       const limitValue = parseInt(limit);
       
-      // Construir query com parâmetros corretos
+      // Query otimizada para reduzir uso de temp files
       let query = `
         SELECT 
           pvt.product_id,
@@ -155,14 +155,15 @@ class TrafficService {
           COUNT(DISTINCT pvt.order_id) AS orders_count,
           SUM(pvt.quantity) AS quantity_sold,
           SUM(pvt.price * pvt.quantity) AS revenue,
-          SUM(pvt.cost_price * pvt.quantity) AS cost,
+          SUM(COALESCE(pvt.cost_price, 0) * pvt.quantity) AS cost,
           SUM((pvt.price - COALESCE(pvt.cost_price, 0)) * pvt.quantity) AS profit,
           COUNT(DISTINCT pvt.id_campaign) AS campaigns_count,
-          GROUP_CONCAT(DISTINCT pvt.id_campaign) AS campaign_ids
+          GROUP_CONCAT(DISTINCT pvt.id_campaign SEPARATOR ',') AS campaign_ids
         FROM produtos_vendidos_tray_ecommerce pvt
         INNER JOIN pedidos_ecommerce_tray pet ON pvt.order_id = pet.id
         WHERE pet.date BETWEEN ? AND ?
           AND pvt.id_campaign IS NOT NULL
+          AND pvt.id_campaign != ''
       `;
       
       const params = [startDate, endDate];
@@ -180,12 +181,12 @@ class TrafficService {
       
       const [products] = await conn.execute(query, params);
 
-      // Para cada produto, buscar investimento, cliques e links das campanhas
-      const productsWithInvestment = [];
+      // Processar produtos de forma mais eficiente
+      const productsWithData = [];
       
       for (const product of products) {
         if (!product.campaign_ids) {
-          productsWithInvestment.push({
+          productsWithData.push({
             ...product,
             revenue: parseFloat(product.revenue || 0),
             cost: parseFloat(product.cost || 0),
@@ -199,28 +200,49 @@ class TrafficService {
           continue;
         }
         
-        const campaignIds = product.campaign_ids.split(',').filter(id => id && id.trim());
-        const [investment, clicks, campaignLinks] = campaignIds.length > 0 ? 
-          await Promise.all([
-            this.getCampaignInvestment(campaignIds, startDate, endDate),
-            this.getCampaignClicks(campaignIds, startDate, endDate),
-            this.getCampaignLinks(campaignIds)
-          ]) : [0, 0, []];
+        // Limitar a 10 campanhas por produto para evitar queries muito grandes
+        const campaignIds = product.campaign_ids.split(',')
+          .filter(id => id && id.trim())
+          .slice(0, 10);
         
-        productsWithInvestment.push({
+        if (campaignIds.length === 0) {
+          productsWithData.push({
+            ...product,
+            revenue: parseFloat(product.revenue || 0),
+            cost: parseFloat(product.cost || 0),
+            profit: parseFloat(product.profit || 0),
+            investment: 0,
+            clicks: 0,
+            roi: 0,
+            roas: 0,
+            campaign_links: []
+          });
+          continue;
+        }
+        
+        // Buscar dados das campanhas de forma otimizada
+        const [investment, clicks, campaignLinks] = await Promise.all([
+          this.getCampaignInvestment(campaignIds, startDate, endDate),
+          this.getCampaignClicks(campaignIds, startDate, endDate),
+          this.getCampaignLinks(campaignIds)
+        ]);
+        
+        const revenue = parseFloat(product.revenue || 0);
+        
+        productsWithData.push({
           ...product,
-          revenue: parseFloat(product.revenue || 0),
+          revenue,
           cost: parseFloat(product.cost || 0),
           profit: parseFloat(product.profit || 0),
           investment,
           clicks,
           campaign_links: campaignLinks,
-          roi: investment > 0 ? parseFloat(((product.revenue - investment) / investment * 100).toFixed(2)) : 0,
-          roas: investment > 0 ? parseFloat((product.revenue / investment).toFixed(2)) : 0
+          roi: investment > 0 ? parseFloat(((revenue - investment) / investment * 100).toFixed(2)) : 0,
+          roas: investment > 0 ? parseFloat((revenue / investment).toFixed(2)) : 0
         });
       }
 
-      return productsWithInvestment;
+      return productsWithData;
     } finally {
       conn.release();
     }
@@ -421,7 +443,7 @@ class TrafficService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // HELPER: Buscar links das campanhas
+  // HELPER: Buscar links das campanhas (otimizado)
   // ──────────────────────────────────────────────────────────
   async getCampaignLinks(campaignIds) {
     if (!campaignIds || campaignIds.length === 0) return [];
@@ -429,19 +451,24 @@ class TrafficService {
     const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
     if (validIds.length === 0) return [];
     
+    // Limitar a 5 campanhas para evitar queries muito pesadas
+    const limitedIds = validIds.slice(0, 5);
+    
     const conn = await this.pool.getConnection();
     try {
-      const placeholders = validIds.map(() => '?').join(',');
+      const placeholders = limitedIds.map(() => '?').join(',');
       const links = [];
       
-      // Facebook - buscar campaign_id para construir URL
+      // Facebook - buscar apenas dados essenciais
       try {
         const [fbRows] = await conn.execute(
-          `SELECT DISTINCT campaign_id, campaign_name 
+          `SELECT campaign_id, 
+                  SUBSTRING(campaign_name, 1, 50) as campaign_name 
            FROM facebook_campanhas 
            WHERE campaign_id IN (${placeholders})
-           LIMIT 10`,
-          validIds
+           GROUP BY campaign_id, campaign_name
+           LIMIT 5`,
+          limitedIds
         );
         fbRows.forEach(row => {
           if (row.campaign_id) {
@@ -453,16 +480,20 @@ class TrafficService {
             });
           }
         });
-      } catch (err) {}
+      } catch (err) {
+        console.error('Error fetching Facebook links:', err.message);
+      }
       
       // Google Ads
       try {
         const [googleRows] = await conn.execute(
-          `SELECT DISTINCT campaign_id, campaign_name 
+          `SELECT campaign_id,
+                  SUBSTRING(campaign_name, 1, 50) as campaign_name  
            FROM googleads_custom_report 
            WHERE campaign_id IN (${placeholders})
-           LIMIT 10`,
-          validIds
+           GROUP BY campaign_id, campaign_name
+           LIMIT 5`,
+          limitedIds
         );
         googleRows.forEach(row => {
           if (row.campaign_id) {
@@ -474,16 +505,20 @@ class TrafficService {
             });
           }
         });
-      } catch (err) {}
+      } catch (err) {
+        console.error('Error fetching Google links:', err.message);
+      }
       
       // TikTok
       try {
         const [tiktokRows] = await conn.execute(
-          `SELECT DISTINCT campaign_id, campaign_name 
+          `SELECT campaign_id,
+                  SUBSTRING(campaign_name, 1, 50) as campaign_name 
            FROM tiktokads_reports_campaign_report 
            WHERE campaign_id IN (${placeholders})
-           LIMIT 10`,
-          validIds
+           GROUP BY campaign_id, campaign_name
+           LIMIT 5`,
+          limitedIds
         );
         tiktokRows.forEach(row => {
           if (row.campaign_id) {
@@ -495,9 +530,11 @@ class TrafficService {
             });
           }
         });
-      } catch (err) {}
+      } catch (err) {
+        console.error('Error fetching TikTok links:', err.message);
+      }
 
-      return links;
+      return links.slice(0, 10); // Máximo 10 links por produto
     } finally {
       conn.release();
     }
