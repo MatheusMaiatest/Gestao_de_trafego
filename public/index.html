@@ -753,17 +753,17 @@ function renderKPISkel(id){
 function renderDashKPIs(kpi,seg){
   const risco=(seg.segments||[]).find(s=>s.segment==='inativo')?.customerCount||0;
   const ks=[
-    {l:'Faturamento Total',v:fmt(kpi.totalRevenue),c:'accent'},
-    {l:'Total de Pedidos',v:fmtN(kpi.totalOrders),c:''},
-    {l:'Clientes Ativos',v:fmtN(kpi.activeClients),c:'ok'},
-    {l:'Clientes Inativos',v:fmtN(kpi.inactiveClients),c:'err'},
-    {l:'Novos Clientes',v:fmtN(kpi.newClients),c:'eco'},
-    {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
-    {l:'Freq. de Compra',v:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x',c:''},
-    {l:'Clientes Em Risco',v:fmtN(risco),c:'warn'},
+    {l:'Faturamento Total',v:fmt(kpi.totalRevenue),c:'accent',tip:'Soma de todas as vendas realizadas no período'},
+    {l:'Total de Pedidos',v:fmtN(kpi.totalOrders),c:'',tip:'Quantidade total de pedidos/vendas efetuados'},
+    {l:'Clientes Ativos',v:fmtN(kpi.activeClients),c:'ok',tip:'Clientes que compraram nos últimos 90 dias'},
+    {l:'Clientes Inativos',v:fmtN(kpi.inactiveClients),c:'err',tip:'Clientes sem compras há mais de 90 dias'},
+    {l:'Novos Clientes',v:fmtN(kpi.newClients),c:'eco',tip:'Clientes que fizeram a primeira compra no período'},
+    {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:'',tip:'Valor médio de cada venda (Faturamento / Pedidos)'},
+    {l:'Freq. de Compra',v:(kpi.averagePurchaseFrequency||0).toFixed(2)+'x',c:'',tip:'Número médio de compras por cliente no período'},
+    {l:'Clientes Em Risco',v:fmtN(risco),c:'warn',tip:'Clientes entre 30-90 dias sem comprar (risco de inativação)'},
   ];
   document.getElementById('d-kpis').innerHTML=ks.map(k=>
-    `<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
+    `<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
   ).join('');
 }
 
@@ -1510,11 +1510,11 @@ async function loadClientes(){
     const ord=clients.reduce((s,c)=>s+parseInt(c.totalOrders||c.orderCount||0),0);
     document.getElementById('c-kpis').style.display='grid';
     document.getElementById('c-kpis').innerHTML=[
-      {l:'Clientes',v:fmtN(tot),c:''},
-      {l:'Faturamento',v:fmt(sp),c:'accent'},
-      {l:'Pedidos',v:fmtN(ord),c:''},
-      {l:'Ticket Médio',v:fmt(ord>0?sp/ord:0),c:'ok'},
-    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+      {l:'Clientes',v:fmtN(tot),c:'',tip:'Total de clientes encontrados com os filtros aplicados'},
+      {l:'Faturamento',v:fmt(sp),c:'accent',tip:'Soma do total gasto por todos os clientes no período'},
+      {l:'Pedidos',v:fmtN(ord),c:'',tip:'Quantidade total de pedidos realizados pelos clientes'},
+      {l:'Ticket Médio',v:fmt(ord>0?sp/ord:0),c:'ok',tip:'Valor médio por pedido (Faturamento / Pedidos)'},
+    ].map(k=>`<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
     document.getElementById('c-count').textContent=`${fmtN(tot)} clientes`;
   } catch(err){
     document.getElementById('c-tbody').innerHTML=`<tr><td colspan="13" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
@@ -1708,11 +1708,11 @@ async function loadRKPIs(){
     const kpi=await api(`/dashboard/kpis?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
     document.getElementById('r-kpis').style.display='grid';
     document.getElementById('r-kpis').innerHTML=[
-      {l:'Faturamento',v:fmt(kpi.totalRevenue),c:'accent'},
-      {l:'Pedidos',v:fmtN(kpi.totalOrders),c:''},
-      {l:'Clientes',v:fmtN(kpi.activeClients),c:'ok'},
-      {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:''},
-    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+      {l:'Faturamento',v:fmt(kpi.totalRevenue),c:'accent',tip:'Receita total do período selecionado'},
+      {l:'Pedidos',v:fmtN(kpi.totalOrders),c:'',tip:'Número total de vendas realizadas'},
+      {l:'Clientes',v:fmtN(kpi.activeClients),c:'ok',tip:'Clientes que compraram no período'},
+      {l:'Ticket Médio',v:fmt(kpi.averageTicket),c:'',tip:'Valor médio por venda'},
+    ].map(k=>`<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
   }catch(e){}
 }
 
@@ -1811,9 +1811,9 @@ async function loadDisparo(){
     const tot=dmData.length,sp=dmData.reduce((s,c)=>s+parseFloat(c.totalSpent||0),0);
     document.getElementById('dm-kpis').style.display='grid';
     document.getElementById('dm-kpis').innerHTML=[
-      {l:'Clientes',v:fmtN(tot),c:''},
-      {l:'Pot. Faturamento',v:fmt(sp),c:'accent'},
-    ].map(k=>`<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
+      {l:'Clientes',v:fmtN(tot),c:'',tip:'Total de clientes no segmento selecionado (inativos, em risco, VIP, etc)'},
+      {l:'Pot. Faturamento',v:fmt(sp),c:'accent',tip:'Faturamento histórico total destes clientes - potencial de reativação'},
+    ].map(k=>`<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
   }catch(err){
     document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
   } finally {
@@ -1909,18 +1909,18 @@ async function loadTrafficDash() {
 
 function renderTrafficKPIs(data) {
   const ks = [
-    { l: 'Investimento Total', v: fmt(data.investment), c: 'accent' },
-    { l: 'Receita Gerada', v: fmt(data.revenue), c: 'ok' },
-    { l: 'ROAS', v: (data.roas || 0).toFixed(2) + 'x', c: 'eco' },
-    { l: 'Conversões', v: fmtN(data.purchases), c: '' },
-    { l: 'Cliques', v: fmtN(data.clicks), c: '' },
-    { l: 'Impressões', v: fmtN(data.impressions), c: '' },
-    { l: 'CPC Médio', v: fmt(data.avgCPC), c: '' },
-    { l: 'CTR Médio', v: (data.avgCTR || 0).toFixed(2) + '%', c: 'warn' },
+    { l: 'Investimento Total', v: fmt(data.investment), c: 'accent', tip: 'Total gasto em anúncios pagos nas plataformas de mídia' },
+    { l: 'Receita Gerada', v: fmt(data.revenue), c: 'ok', tip: 'Faturamento total das vendas atribuídas às campanhas' },
+    { l: 'ROAS', v: (data.roas || 0).toFixed(2) + 'x', c: 'eco', tip: 'Return on Ad Spend - Quanto você ganhou para cada R$1 investido (Receita / Investimento)' },
+    { l: 'Conversões', v: fmtN(data.purchases), c: '', tip: 'Número total de compras/vendas realizadas através das campanhas' },
+    { l: 'Cliques', v: fmtN(data.clicks), c: '', tip: 'Total de cliques nos anúncios que levaram ao site' },
+    { l: 'Impressões', v: fmtN(data.impressions), c: '', tip: 'Número de vezes que seus anúncios foram exibidos' },
+    { l: 'CPC Médio', v: fmt(data.avgCPC), c: '', tip: 'Custo Por Clique - Valor médio pago por cada clique no anúncio' },
+    { l: 'CTR Médio', v: (data.avgCTR || 0).toFixed(2) + '%', c: 'warn', tip: 'Click-Through Rate - Taxa de cliques: % de pessoas que clicaram após ver o anúncio' },
   ];
   
   document.getElementById('t-kpis').innerHTML = ks.map(k =>
-    `<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
+    `<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
   ).join('');
 }
 
