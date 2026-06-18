@@ -752,24 +752,26 @@ function getHeatColorEx(value, min, max, dark) {
   return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
 }
 
-// Versão com escala logarítmica — comprime outliers e expande valores baixos
+// Versão com escala logarítmica base 10 — comprime outliers extremos de forma mais agressiva
 function getHeatColorByRank(value, sortedValues, dark, debugPrefix) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
   
-  // Usar escala logarítmica para lidar com outliers extremos
+  // Estatísticas da distribuição
   var min = sortedValues[0];
   var max = sortedValues[sortedValues.length - 1];
   var q25 = sortedValues[Math.floor(sortedValues.length * 0.25)];
   var median = sortedValues[Math.floor(sortedValues.length * 0.5)];
   var q75 = sortedValues[Math.floor(sortedValues.length * 0.75)];
   
-  // log(1 + valor) comprime extremos e expande valores baixos/médios
-  var logVal = Math.log(1 + value);
-  var logMax = Math.log(1 + max);
+  // Usar log10 para comprimir outliers de forma mais agressiva
+  // log10(1 + valor) transforma: R$100 → 2.0, R$1000 → 3.0, R$10k → 4.0, R$100k → 5.0, R$1M → 6.0, R$2M → 6.3
+  var logVal = Math.log10(1 + value);
+  var logMin = Math.log10(1 + min);
+  var logMax = Math.log10(1 + max);
   
-  // t vai de 0 a 1 na escala logarítmica
-  var t = logMax > 0 ? logVal / logMax : 0;
+  // Normalizar entre min e max (não entre 0 e max) para dar mais espaço aos valores baixos
+  var t = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
   t = Math.max(0, Math.min(1, t));
   
   // Mapear na paleta de 14 cores
@@ -810,6 +812,7 @@ function getHeatColorByRank(value, sortedValues, dark, debugPrefix) {
       q75: q75.toFixed(2),
       max: max.toFixed(2),
       logVal: logVal.toFixed(4),
+      logMin: logMin.toFixed(4),
       logMax: logMax.toFixed(4),
       t: t.toFixed(4),
       stopIndex: i,
