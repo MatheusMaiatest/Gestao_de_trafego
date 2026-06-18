@@ -625,7 +625,7 @@ app.get('/api/segments', async (req, res) => {
 // CORREÇÃO 1: Adicionar cpf na query de segments/:type/customers
 app.get('/api/segments/:type/customers', async (req, res) => {
   const { type } = req.params;
-  const { startDate, endDate, businessUnit: bu = 'all' } = req.query;
+  const { startDate, endDate, businessUnit: bu = 'all', states, cities } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   const validTypes = ['vip','recorrente','novo','inativo','em_risco'];
   if (!validTypes.includes(type)) return res.status(400).json({ error: 'Tipo inválido.' });
@@ -691,7 +691,32 @@ app.get('/api/segments/:type/customers', async (req, res) => {
       }
     });
 
-    const clients  = [...map.values()];
+    let clients = [...map.values()];
+    
+    // APLICAR FILTROS DE LOCALIZAÇÃO
+    if (states && states.length > 0) {
+      const stateList = states.split(',').map(s => s.trim().toUpperCase());
+      clients = clients.filter(c => {
+        const clientState = (c.state || '').trim().toUpperCase();
+        return stateList.includes(clientState);
+      });
+    }
+    
+    if (cities && cities.length > 0) {
+      const cityList = cities.split(',').map(c => {
+        const [city, state] = c.split('|');
+        return { city: city.trim().toUpperCase(), state: state.trim().toUpperCase() };
+      });
+      
+      clients = clients.filter(c => {
+        const clientCity = (c.city || '').trim().toUpperCase();
+        const clientState = (c.state || '').trim().toUpperCase();
+        return cityList.some(filter => 
+          filter.city === clientCity && filter.state === clientState
+        );
+      });
+    }
+    
     const vipLimit = Math.ceil(clients.length * 0.1);
     const sorted   = [...clients].sort((a,b) => b.totalSpent - a.totalSpent);
     const sd = new Date(startDate), ed = new Date(endDate);
