@@ -64,11 +64,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .map-card-title{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm);display:flex;align-items:center;gap:6px}
 .map-svg-wrap{flex:1;overflow:hidden;border-radius:var(--rs);position:relative;min-height:340px}
 .map-svg-wrap svg{width:100%;height:100%;display:block}
-.state-path{fill:var(--bdr);stroke:#1a1d27;stroke-width:2;cursor:pointer;transition:opacity .15s,fill .2s}
-.state-path:hover{opacity:.8;stroke:#fff;stroke-width:2.5}
-.state-path.selected{stroke:#ffd700;stroke-width:3}
-.mun-path{fill:var(--bgch);stroke:#1a1d27;stroke-width:1.2;cursor:pointer;transition:opacity .15s}
-.mun-path:hover{opacity:.8;stroke:#ffd700;stroke-width:2}
+.state-path{fill:var(--bdr);stroke:#1a1d27;stroke-width:0.8;cursor:pointer;transition:opacity .15s,fill .2s}
+.state-path:hover{opacity:.8;stroke:#fff;stroke-width:1.2}
+.state-path.selected{stroke:#ffd700;stroke-width:1.5}
+.mun-path{fill:var(--bgch);stroke:#1a1d27;stroke-width:0.5;cursor:pointer;transition:opacity .15s}
+.mun-path:hover{opacity:.8;stroke:#ffd700;stroke-width:1}
 .mun-path.has-data{cursor:pointer}
 .map-tooltip{position:fixed;background:rgba(0,0,0,.88);color:#fff;padding:6px 11px;border-radius:7px;font-size:.72rem;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;white-space:nowrap}
 .legend-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
@@ -917,7 +917,7 @@ function renderMapNF(states){
     .attr('class','state-path').attr('d',path)
     .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].customers:0); })
     .attr('stroke', '#1a1d27')
-    .attr('stroke-width', '2')
+    .attr('stroke-width', '0.8')
     .on('mouseenter',function(event,d){ var uf=getSigla(d); showMapTip(event,uf+(ufMap[uf]?': '+fmtN(ufMap[uf].customers)+' clientes':'')); })
     .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
     .on('click',function(event,d){
@@ -967,7 +967,7 @@ function renderMapFat(states){
     .attr('class','state-path').attr('d',path)
     .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].revenue:0); })
     .attr('stroke', '#1a1d27')
-    .attr('stroke-width', '2')
+    .attr('stroke-width', '0.8')
     .on('mouseenter',function(event,d){ var s=getSigla(d); showMapTip(event,s+(ufMap[s]?': '+fmt(ufMap[s].revenue):'')); })
     .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
     .on('click',function(event,d){
@@ -1111,7 +1111,7 @@ function renderDrillMap(geo, uf, stateName, mode) {
           .attr('d',path)
           .attr('fill', hasData ? getColor(val) : (dark?'#161922':'#edf2f7'))
           .attr('stroke', '#1a1d27')
-          .attr('stroke-width', '1.2')
+          .attr('stroke-width', '0.5')
           .attr('opacity', hasData ? 1 : 0.5)
           .on('mouseenter',function(event){
             var label = feature.properties.name||'';
