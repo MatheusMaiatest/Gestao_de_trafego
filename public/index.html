@@ -752,22 +752,20 @@ function getHeatColorEx(value, min, max, dark) {
   return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
 }
 
-// Versão por proporção real dos valores — usa magnitude dos valores, não ranking
+// Versão com escala logarítmica — comprime outliers e expande valores baixos
 function getHeatColorByRank(value, sortedValues, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
   
-  // Calcular proporção baseada nos valores reais (min e max)
-  var min = sortedValues[0];
+  // Usar escala logarítmica para lidar com outliers extremos
   var max = sortedValues[sortedValues.length - 1];
   
-  // Aplicar escala raiz quadrada para melhor distribuição visual
-  var sqMin = Math.sqrt(Math.max(0, min));
-  var sqMax = Math.sqrt(max);
-  var sqVal = Math.sqrt(value);
+  // log(1 + valor) comprime extremos e expande valores baixos/médios
+  var logVal = Math.log(1 + value);
+  var logMax = Math.log(1 + max);
   
-  // t vai de 0 (menor valor) a 1 (maior valor) baseado na MAGNITUDE
-  var t = sqMax > sqMin ? (sqVal - sqMin) / (sqMax - sqMin) : 0;
+  // t vai de 0 a 1 na escala logarítmica
+  var t = logMax > 0 ? logVal / logMax : 0;
   t = Math.max(0, Math.min(1, t));
   
   // Mapear na paleta de 14 cores
