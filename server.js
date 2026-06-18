@@ -1002,6 +1002,58 @@ app.get('/api/campaign/metrics', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// ROTAS TRÁFEGO PAGO
+// ══════════════════════════════════════════════════════════════
+const TrafficService = require('./services/trafficService');
+const trafficService = new TrafficService(pool);
+
+// ── Dashboard KPIs de Tráfego Pago ────────────────────────────
+app.get('/api/traffic/dashboard', async (req, res) => {
+  const { startDate, endDate, platform = 'all', campaign } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  
+  try {
+    const kpis = await trafficService.getDashboardKPIs({ startDate, endDate, platform, campaign });
+    res.json({ period: { startDate, endDate }, platform, ...kpis });
+  } catch (err) {
+    logger.error('traffic dashboard: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Análise por Produto ────────────────────────────────────────
+app.get('/api/traffic/products', async (req, res) => {
+  const { startDate, endDate, platform = 'all', campaign, limit = 100 } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  
+  try {
+    const products = await trafficService.getProductAnalysis({ 
+      startDate, endDate, platform, campaign, limit: parseInt(limit) 
+    });
+    res.json({ products, total: products.length });
+  } catch (err) {
+    logger.error('traffic products: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Análise por Campanha ───────────────────────────────────────
+app.get('/api/traffic/campaigns', async (req, res) => {
+  const { startDate, endDate, platform = 'all', limit = 100 } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  
+  try {
+    const campaigns = await trafficService.getCampaignAnalysis({ 
+      startDate, endDate, platform, limit: parseInt(limit) 
+    });
+    res.json({ campaigns, total: campaigns.length });
+  } catch (err) {
+    logger.error('traffic campaigns: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── 404 API ───────────────────────────────────────────────────
 // Rotas /api/ que não existem retornam JSON, nunca HTML
 app.use('/api', (_req, res) => {

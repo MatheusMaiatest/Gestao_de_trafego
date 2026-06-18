@@ -212,6 +212,7 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
   <nav class="tabs">
     <button class="tab active" onclick="showTab('dashboard',this)">📈 Dashboard</button>
     <button class="tab" onclick="showTab('clientes',this)">👥 Clientes</button>
+    <button class="tab" onclick="showTab('trafego',this)">📢 Tráfego Pago</button>
     <button class="tab" onclick="showTab('relatorios',this)">📄 Relatórios</button>
     <button class="tab" onclick="showTab('disparo',this)">📱 Disparo</button>
   </nav>
@@ -268,6 +269,130 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
       </div>
     </div>
     <div class="map-tooltip" id="map-tooltip"></div>
+  </div>
+</div>
+
+<!-- ═══════ TRÁFEGO PAGO ═══════════════════════════════════════ -->
+<div id="tab-trafego" class="section">
+  <div class="content">
+    <!-- Filtros -->
+    <div class="filter-bar">
+      <div class="fg"><label>Início</label><input type="date" id="t-s"/></div>
+      <div class="fg"><label>Fim</label><input type="date" id="t-e"/></div>
+      <div class="fg"><label>Plataforma</label>
+        <div class="btn-group">
+          <button class="ubtn active" data-platform="all" onclick="setTPlatform(this)">Todas</button>
+          <button class="ubtn" data-platform="facebook" onclick="setTPlatform(this)" style="border-color:rgba(66,103,178,.3)">📘 Facebook</button>
+          <button class="ubtn" data-platform="google" onclick="setTPlatform(this)" style="border-color:rgba(234,67,53,.3)">🔴 Google</button>
+          <button class="ubtn" data-platform="tiktok" onclick="setTPlatform(this)" style="border-color:rgba(0,0,0,.3)">🎵 TikTok</button>
+        </div>
+      </div>
+      <button class="btn-search" onclick="loadTrafficDash()">🔍 Analisar</button>
+    </div>
+
+    <!-- KPIs Principais -->
+    <div class="kpi-grid" id="t-kpis"></div>
+
+    <!-- Abas de Análise -->
+    <div style="display:flex;gap:6px;margin-top:10px;border-bottom:2px solid var(--bdr);padding-bottom:0">
+      <button class="tab active" style="border-radius:var(--rs) var(--rs) 0 0;border-bottom:none" onclick="showTSection('overview',this)">📊 Visão Geral</button>
+      <button class="tab" style="border-radius:var(--rs) var(--rs) 0 0;border-bottom:none" onclick="showTSection('campaigns',this)">🎯 Campanhas</button>
+      <button class="tab" style="border-radius:var(--rs) var(--rs) 0 0;border-bottom:none" onclick="showTSection('products',this)">📦 Produtos</button>
+      <button class="tab" style="border-radius:var(--rs) var(--rs) 0 0;border-bottom:none" onclick="showTSection('ranking',this)">🏆 Rankings</button>
+    </div>
+
+    <!-- Seção: Visão Geral -->
+    <div id="t-section-overview" class="t-section" style="display:flex;flex-direction:column;gap:14px;margin-top:14px">
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-title"><span>💰</span>ROAS por Plataforma</div>
+          <div class="chart-wrap"><canvas id="t-chart-roas"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>🎯</span>Performance por Plataforma</div>
+          <div class="chart-wrap"><canvas id="t-chart-platform"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Seção: Campanhas -->
+    <div id="t-section-campaigns" class="t-section" style="display:none;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <input type="text" id="t-campaign-search" class="search-input" placeholder="Buscar campanha..." style="flex:1"/>
+        <span id="t-campaign-count" style="font-size:.72rem;color:var(--tm)"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Campanha</th>
+              <th>Plataforma</th>
+              <th>Status</th>
+              <th>Período</th>
+              <th>Investimento</th>
+              <th>Cliques</th>
+              <th>Impressões</th>
+              <th>Conversões</th>
+              <th>Receita</th>
+              <th>ROAS</th>
+            </tr>
+          </thead>
+          <tbody id="t-campaigns-tbody">
+            <tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Seção: Produtos -->
+    <div id="t-section-products" class="t-section" style="display:none;margin-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <input type="text" id="t-product-search" class="search-input" placeholder="Buscar produto..." style="flex:1"/>
+        <span id="t-product-count" style="font-size:.72rem;color:var(--tm)"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th>SKU</th>
+              <th>Marca</th>
+              <th>Qtd Vendida</th>
+              <th>Receita</th>
+              <th>Investimento</th>
+              <th>Lucro</th>
+              <th>ROAS</th>
+              <th>Nº Campanhas</th>
+            </tr>
+          </thead>
+          <tbody id="t-products-tbody">
+            <tr><td colspan="9"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Seção: Rankings -->
+    <div id="t-section-ranking" class="t-section" style="display:none;margin-top:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div class="chart-card">
+          <div class="chart-title"><span>🏆</span>Top 10 Campanhas por Receita</div>
+          <div class="chart-wrap"><canvas id="t-rank-campaign-revenue"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>🎯</span>Top 10 Campanhas por ROAS</div>
+          <div class="chart-wrap"><canvas id="t-rank-campaign-roas"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>📦</span>Top 10 Produtos por Faturamento</div>
+          <div class="chart-wrap"><canvas id="t-rank-product-revenue"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title"><span>💰</span>Top 10 Produtos por Quantidade</div>
+          <div class="chart-wrap"><canvas id="t-rank-product-qty"></canvas></div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1730,6 +1855,234 @@ document.querySelectorAll('.overlay').forEach(o=>{
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.overlay.open').forEach(o=>closeOv(o.id));});
 document.getElementById('c-search').addEventListener('input',debounce(loadClientes,400));
+
+// ══════════════════════════════════════════════════════════════
+// TRÁFEGO PAGO
+// ══════════════════════════════════════════════════════════════
+
+let tPlatform = 'all';
+let tData = { campaigns: [], products: [] };
+
+function setTPlatform(btn) {
+  tPlatform = btn.dataset.platform;
+  btn.closest('.btn-group').querySelectorAll('.ubtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  invCache('/traffic');
+}
+
+function showTSection(section, btn) {
+  document.querySelectorAll('.t-section').forEach(s => s.style.display = 'none');
+  document.querySelectorAll('#tab-trafego .tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('t-section-' + section).style.display = section === 'overview' ? 'flex' : 'block';
+  btn.classList.add('active');
+  
+  if (section === 'campaigns' && !tData.campaigns.length) loadTrafficCampaigns();
+  if (section === 'products' && !tData.products.length) loadTrafficProducts();
+  if (section === 'ranking') loadTrafficRankings();
+}
+
+async function loadTrafficDash() {
+  const s = document.getElementById('t-s').value;
+  const e = document.getElementById('t-e').value;
+  if (!s || !e) return;
+  if (s > e) { alert('A data de início não pode ser maior que a data de fim.'); return; }
+  
+  const btn = document.querySelector('#tab-trafego .btn-search');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analisando...'; }
+  
+  renderKPISkel('t-kpis');
+  
+  try {
+    const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
+    const data = await api('/traffic/dashboard' + q);
+    
+    renderTrafficKPIs(data);
+    renderTrafficCharts(data);
+    
+  } catch (err) {
+    document.getElementById('t-kpis').innerHTML = `<div style="grid-column:1/-1;color:var(--err);padding:14px">❌ ${err.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍 Analisar'; }
+  }
+}
+
+function renderTrafficKPIs(data) {
+  const ks = [
+    { l: 'Investimento Total', v: fmt(data.investment), c: 'accent' },
+    { l: 'Receita Gerada', v: fmt(data.revenue), c: 'ok' },
+    { l: 'ROAS', v: (data.roas || 0).toFixed(2) + 'x', c: 'eco' },
+    { l: 'Conversões', v: fmtN(data.purchases), c: '' },
+    { l: 'Cliques', v: fmtN(data.clicks), c: '' },
+    { l: 'Impressões', v: fmtN(data.impressions), c: '' },
+    { l: 'CPC Médio', v: fmt(data.avgCPC), c: '' },
+    { l: 'CTR Médio', v: (data.avgCTR || 0).toFixed(2) + '%', c: 'warn' },
+  ];
+  
+  document.getElementById('t-kpis').innerHTML = ks.map(k =>
+    `<div class="kpi-card ${k.c}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`
+  ).join('');
+}
+
+async function renderTrafficCharts(data) {
+  const s = document.getElementById('t-s').value;
+  const e = document.getElementById('t-e').value;
+  const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
+  
+  try {
+    const [campaigns, products] = await Promise.all([
+      api('/traffic/campaigns' + q),
+      api('/traffic/products' + q + '&limit=10')
+    ]);
+    
+    // ROAS por Plataforma
+    const platformGroups = {};
+    campaigns.campaigns.forEach(c => {
+      if (!platformGroups[c.platform]) platformGroups[c.platform] = { investment: 0, revenue: 0 };
+      platformGroups[c.platform].investment += parseFloat(c.investment || 0);
+      platformGroups[c.platform].revenue += parseFloat(c.revenue || 0);
+    });
+    
+    const platformData = Object.entries(platformGroups).map(([platform, data]) => ({
+      platform,
+      roas: data.investment > 0 ? (data.revenue / data.investment).toFixed(2) : 0
+    }));
+    
+    mkChart('t-chart-roas', 'bar', platformData, d => d.platform, d => parseFloat(d.roas), {});
+    
+    // Performance (Investimento) por Plataforma
+    const platformInv = Object.entries(platformGroups).map(([platform, data]) => ({
+      platform,
+      investment: data.investment
+    }));
+    
+    mkChart('t-chart-platform', 'doughnut', platformInv, d => d.platform, d => d.investment, {});
+    
+  } catch (err) {
+    console.error('Erro ao carregar gráficos:', err);
+  }
+}
+
+async function loadTrafficCampaigns() {
+  const s = document.getElementById('t-s').value;
+  const e = document.getElementById('t-e').value;
+  if (!s || !e) return;
+  
+  const tbody = document.getElementById('t-campaigns-tbody');
+  tbody.innerHTML = '<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  
+  try {
+    const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
+    const data = await api('/traffic/campaigns' + q);
+    tData.campaigns = data.campaigns;
+    
+    document.getElementById('t-campaign-count').textContent = `${tData.campaigns.length} campanhas`;
+    
+    if (!tData.campaigns.length) {
+      tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">🎯</div><p>Nenhuma campanha encontrada no período</p></div></td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = tData.campaigns.map(c => `
+      <tr>
+        <td><strong>${c.campaign_name || 'Sem nome'}</strong></td>
+        <td><span class="unit-badge">${getPlatformBadge(c.platform)}</span></td>
+        <td>${c.status || '—'}</td>
+        <td>${fmtD(c.start_date)} a ${fmtD(c.end_date)}</td>
+        <td>${fmt(c.investment)}</td>
+        <td>${fmtN(c.clicks)}</td>
+        <td>${fmtN(c.impressions)}</td>
+        <td>${fmtN(c.purchases)}</td>
+        <td>${fmt(c.revenue)}</td>
+        <td><strong style="color:${c.roas >= 2 ? 'var(--ok)' : c.roas >= 1 ? 'var(--warn)' : 'var(--err)'}">${(c.roas || 0).toFixed(2)}x</strong></td>
+      </tr>
+    `).join('');
+    
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+async function loadTrafficProducts() {
+  const s = document.getElementById('t-s').value;
+  const e = document.getElementById('t-e').value;
+  if (!s || !e) return;
+  
+  const tbody = document.getElementById('t-products-tbody');
+  tbody.innerHTML = '<tr><td colspan="9"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  
+  try {
+    const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
+    const data = await api('/traffic/products' + q);
+    tData.products = data.products;
+    
+    document.getElementById('t-product-count').textContent = `${tData.products.length} produtos`;
+    
+    if (!tData.products.length) {
+      tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">📦</div><p>Nenhum produto encontrado no período</p></div></td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = tData.products.map(p => `
+      <tr>
+        <td><strong>${p.product_name || 'Sem nome'}</strong></td>
+        <td>${p.sku || '—'}</td>
+        <td>${p.brand || '—'}</td>
+        <td>${fmtN(p.quantity_sold)}</td>
+        <td>${fmt(p.revenue)}</td>
+        <td>${fmt(p.investment)}</td>
+        <td style="color:${p.profit >= 0 ? 'var(--ok)' : 'var(--err)'}">${fmt(p.profit)}</td>
+        <td><strong style="color:${p.roas >= 2 ? 'var(--ok)' : p.roas >= 1 ? 'var(--warn)' : 'var(--err)'}">${(p.roas || 0).toFixed(2)}x</strong></td>
+        <td>${p.campaigns_count || 0}</td>
+      </tr>
+    `).join('');
+    
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="9" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
+  }
+}
+
+async function loadTrafficRankings() {
+  const s = document.getElementById('t-s').value;
+  const e = document.getElementById('t-e').value;
+  if (!s || !e) return;
+  
+  try {
+    const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
+    const [campaigns, products] = await Promise.all([
+      api('/traffic/campaigns' + q + '&limit=10'),
+      api('/traffic/products' + q + '&limit=10')
+    ]);
+    
+    // Top Campanhas por Receita
+    const topCampRevenue = campaigns.campaigns.slice(0, 10).sort((a, b) => b.revenue - a.revenue);
+    mkChart('t-rank-campaign-revenue', 'bar', topCampRevenue, d => d.campaign_name, d => d.revenue, { horiz: true });
+    
+    // Top Campanhas por ROAS
+    const topCampRoas = [...campaigns.campaigns].sort((a, b) => b.roas - a.roas).slice(0, 10);
+    mkChart('t-rank-campaign-roas', 'bar', topCampRoas, d => d.campaign_name, d => d.roas, { horiz: true });
+    
+    // Top Produtos por Receita
+    const topProdRevenue = products.products.slice(0, 10).sort((a, b) => b.revenue - a.revenue);
+    mkChart('t-rank-product-revenue', 'bar', topProdRevenue, d => d.product_name || d.sku, d => d.revenue, { horiz: true });
+    
+    // Top Produtos por Quantidade
+    const topProdQty = [...products.products].sort((a, b) => b.quantity_sold - a.quantity_sold).slice(0, 10);
+    mkChart('t-rank-product-qty', 'bar', topProdQty, d => d.product_name || d.sku, d => d.quantity_sold, { horiz: true });
+    
+  } catch (err) {
+    console.error('Erro ao carregar rankings:', err);
+  }
+}
+
+function getPlatformBadge(platform) {
+  const badges = {
+    'Facebook': '📘 Facebook',
+    'Google': '🔴 Google',
+    'TikTok': '🎵 TikTok',
+    'Instagram': '📷 Instagram'
+  };
+  return badges[platform] || platform;
+}
 
 // ══════════════════════════════════════════════════════════════
 // INIT
