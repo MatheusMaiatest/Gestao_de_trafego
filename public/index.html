@@ -1066,6 +1066,11 @@ function renderDrillMap(geo, uf, stateName, mode) {
     .then(function(res){
       var cities = res.cities||[];
 
+      // DEBUG: logar primeiras cidades para verificar nomes da API vs GeoJSON
+      if(cities.length > 0){
+        console.log('[DrillMap DEBUG] Primeiras 5 cidades da API:', cities.slice(0,5).map(function(c){ return c.city; }));
+      }
+
       // Mapear cidade normalizada → dados (índice exato E por prefixo)
       var cityData={};
       var cityDataByPrefix={};
@@ -1077,12 +1082,22 @@ function renderDrillMap(geo, uf, stateName, mode) {
         if(!cityDataByPrefix[prefix]) cityDataByPrefix[prefix]={customers:c.customerCount, revenue:c.totalRevenue, originalName:c.city};
       });
 
-      // Lookup com fallback fuzzy
+      // Lookup com fallback fuzzy e múltiplas estratégias
       function lookupCity(geoName){
-        var key=normalizeCity(geoName);
+        if (!geoName) return null;
+        // 1. Match exato normalizado
+        var key = normalizeCity(geoName);
         if(cityData[key]) return cityData[key];
-        var prefix=key.replace(/\s/g,'').substring(0,8);
-        return cityDataByPrefix[prefix]||null;
+        // 2. Match por prefixo (8 chars sem espaço)
+        var prefix = key.replace(/\s/g,'').substring(0,8);
+        if(cityDataByPrefix[prefix]) return cityDataByPrefix[prefix];
+        // 3. Match parcial: procura qualquer chave que COMECE com os primeiros 5 chars
+        var pref5 = key.replace(/\s/g,'').substring(0,5);
+        var allKeys = Object.keys(cityData);
+        for(var ki=0; ki<allKeys.length; ki++){
+          if(allKeys[ki].replace(/\s/g,'').indexOf(pref5) === 0) return cityData[allKeys[ki]];
+        }
+        return null;
       }
 
       document.getElementById(subId).textContent = cities.length + ' cidade' + (cities.length!==1?'s':'') + ' encontrada' + (cities.length!==1?'s':'');
@@ -1112,11 +1127,13 @@ function renderDrillMap(geo, uf, stateName, mode) {
       svg.selectAll('*').remove();
       svg.attr('viewBox','0 0 '+W+' '+H);
 
+      var _debugCount = 0;
       geo.features.forEach(function(feature){
         var munName = normalizeCity(feature.properties.name||'');
         var cd = lookupCity(feature.properties.name||'');
         var val = cd?(useVal?cd.revenue:cd.customers):0;
         var hasData = !!cd;
+        if(_debugCount < 5){ console.log('[DrillMap DEBUG] GeoJSON:"'+feature.properties.name+'" → norm:"'+munName+'" → hasData:'+hasData+(cd?' val:'+val:'')); _debugCount++; }
 
         svg.append('path')
           .datum(feature)
