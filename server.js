@@ -646,9 +646,9 @@ app.get('/api/segments/:type/customers', async (req, res) => {
 
     // Buscar dados de localização do Tray (fonte correta)
     const [trayLocationRows] = await conn.execute(`
-      SELECT id, cidade, estado FROM clientes_tray_ecommerce WHERE id IS NOT NULL
+      SELECT id, city, state FROM clientes_tray_ecommerce WHERE id IS NOT NULL
       UNION ALL
-      SELECT id, cidade, estado FROM clientes_tray_distribuicao WHERE id IS NOT NULL
+      SELECT id, city, state FROM clientes_tray_distribuicao WHERE id IS NOT NULL
     `);
 
     // Buscar emails e telefones via NF-e
@@ -670,8 +670,8 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     trayLocationRows.forEach(r => {
       if (r.id) {
         trayLocationMap.set(String(r.id), {
-          city: r.cidade || null,
-          state: r.estado || null
+          city: r.city || null,
+          state: r.state || null
         });
       }
     });
