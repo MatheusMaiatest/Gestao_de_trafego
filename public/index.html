@@ -64,11 +64,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .map-card-title{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--tm);display:flex;align-items:center;gap:6px}
 .map-svg-wrap{flex:1;overflow:hidden;border-radius:var(--rs);position:relative;min-height:340px}
 .map-svg-wrap svg{width:100%;height:100%;display:block}
-.state-path{fill:var(--bdr);stroke:var(--bg2);stroke-width:.5;cursor:pointer;transition:opacity .15s,fill .2s}
-.state-path:hover{opacity:.8;stroke:#fff;stroke-width:1}
-.state-path.selected{stroke:#fff;stroke-width:2}
-.mun-path{fill:var(--bgch);stroke:var(--bdr);stroke-width:.3;cursor:pointer;transition:opacity .15s}
-.mun-path:hover{opacity:.8;stroke:var(--ac);stroke-width:.8}
+.state-path{fill:var(--bdr);stroke:#1a1d27;stroke-width:2;cursor:pointer;transition:opacity .15s,fill .2s}
+.state-path:hover{opacity:.8;stroke:#fff;stroke-width:2.5}
+.state-path.selected{stroke:#ffd700;stroke-width:3}
+.mun-path{fill:var(--bgch);stroke:#1a1d27;stroke-width:1.2;cursor:pointer;transition:opacity .15s}
+.mun-path:hover{opacity:.8;stroke:#ffd700;stroke-width:2}
 .mun-path.has-data{cursor:pointer}
 .map-tooltip{position:fixed;background:rgba(0,0,0,.88);color:#fff;padding:6px 11px;border-radius:7px;font-size:.72rem;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;white-space:nowrap}
 .legend-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
@@ -708,35 +708,6 @@ var _drillCurrentMode = 'nf';
 var TRANSP_COLOR_MAP = {};
 var CHART_COLORS_MAP = ['#5c6bc0','#42a5f5','#ab47bc','#26a69a','#ef5350','#ffa726','#66bb6a','#ec407a','#29b6f6','#d4e157'];
 
-function calcularFaixas(valores, numFaixas) {
-  if (valores.length === 0) return [];
-  var sorted = valores.slice().sort(function(a,b){ return a - b; });
-  var min = sorted[0] || 0;
-  var max = sorted[sorted.length - 1] || 1;
-  if (max - min < numFaixas) {
-    var faixas = [];
-    var step = Math.max(1, Math.ceil((max - min) / numFaixas));
-    for (var i = 0; i < numFaixas; i++) {
-      var lo = min + i * step;
-      var hi = i === numFaixas - 1 ? max : min + (i + 1) * step - 1;
-      if (lo <= max) faixas.push({lo: lo, hi: hi});
-    }
-    return faixas;
-  }
-  var faixasP = [];
-  var percentis = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
-  for (var i = 0; i < percentis.length - 1; i++) {
-    var idxLo = Math.floor(percentis[i] * (sorted.length - 1));
-    var idxHi = Math.floor(percentis[i + 1] * (sorted.length - 1));
-    var lo = sorted[idxLo];
-    var hi = sorted[idxHi];
-    if (lo !== hi || i === 0) {
-      faixasP.push({lo: lo, hi: i === percentis.length - 2 ? max : hi});
-    }
-  }
-  return faixasP;
-}
-
 function getHeatColorEx(value, min, max, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (max <= min) return '#8b0000';
@@ -821,13 +792,36 @@ function getHeatColorByRank(value, sortedValues, dark) {
   return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
 }
 
-function renderLegendaEx(elementId, faixas, min, max, dark, formatFn) {
+function renderLegendaEx(elementId, valores, dark, formatFn) {
   var el = document.getElementById(elementId);
-  if (!el || faixas.length === 0) return;
-  var html = faixas.map(function(f) {
+  if (!el || !valores || valores.length === 0) return;
+  
+  // Usar apenas valores > 0 para calcular as faixas
+  var valoresFiltrados = valores.filter(function(v){ return v > 0; });
+  if (valoresFiltrados.length === 0) return;
+  
+  // Ordenar valores
+  var sorted = valoresFiltrados.slice().sort(function(a,b){return a-b;});
+  var min = sorted[0];
+  var max = sorted[sorted.length - 1];
+  
+  // Calcular faixas baseadas nos percentis dos dados reais
+  var faixas = [];
+  var percentis = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+  
+  for (var i = 0; i < percentis.length - 1; i++) {
+    var idxLo = Math.floor(percentis[i] * (sorted.length - 1));
+    var idxHi = Math.floor(percentis[i + 1] * (sorted.length - 1));
+    var lo = sorted[idxLo];
+    var hi = sorted[idxHi];
+    faixas.push({lo: lo, hi: hi});
+  }
+  
+  // Renderizar legenda com as cores correspondentes aos valores reais
+  var html = faixas.map(function(f, idx) {
     var midValue = (f.lo + f.hi) / 2;
-    var cor = getHeatColorEx(midValue, min, max, dark);
-    var label = formatFn ? formatFn(f.lo) + ' - ' + formatFn(f.hi) : f.lo + ' - ' + f.hi;
+    var cor = getHeatColorByRank(midValue, sorted, dark);
+    var label = formatFn ? formatFn(f.lo) + ' - ' + formatFn(f.hi) : Math.round(f.lo) + ' - ' + Math.round(f.hi);
     return '<div class="legend-item" style="pointer-events:none;padding:3px 8px">' +
       '<span class="legend-dot" style="background:' + cor + '"></span>' +
       '<span style="font-size:.68rem">' + label + '</span></div>';
@@ -898,12 +892,10 @@ function renderMapNF(states){
   (states||[]).forEach(function(s){ ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue}; });
 
   var valores = Object.values(ufMap).map(function(v){ return v.customers; }).filter(function(v){ return v > 0; });
-  var minC = valores.length > 0 ? Math.min.apply(null, valores) : 0;
-  var maxC = valores.length > 0 ? Math.max.apply(null, valores) : 1;
   var dark = document.documentElement.getAttribute('data-theme')==='dark';
 
-  var faixas = calcularFaixas(valores, 5);
-  renderLegendaEx('leg-nf', faixas, minC, maxC, dark, null);
+  // Renderizar legenda com valores reais
+  renderLegendaEx('leg-nf', valores, dark, null);
 
   var sortedNF = valores.slice().sort(function(a,b){return a-b;});
   var getColor = function(value) {
@@ -924,8 +916,8 @@ function renderMapNF(states){
   g.selectAll('path').data(GEO_DATA.features).enter().append('path')
     .attr('class','state-path').attr('d',path)
     .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].customers:0); })
-    .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
-    .attr('stroke-width', '0.5')
+    .attr('stroke', '#1a1d27')
+    .attr('stroke-width', '2')
     .on('mouseenter',function(event,d){ var uf=getSigla(d); showMapTip(event,uf+(ufMap[uf]?': '+fmtN(ufMap[uf].customers)+' clientes':'')); })
     .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
     .on('click',function(event,d){
@@ -936,8 +928,11 @@ function renderMapNF(states){
     });
   g.selectAll('text').data(GEO_DATA.features).enter().append('text')
     .attr('transform',function(d){ var c=path.centroid(d); return 'translate('+c+')'; })
-    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700').attr('pointer-events','none')
-    .attr('fill',function(d){ var s=getSigla(d),v=ufMap[s]?ufMap[s].customers:0; return v > maxC * 0.5 ? '#fff' : (dark?'#9fa8da':'#334155'); })
+    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','10').attr('font-weight','800').attr('pointer-events','none')
+    .attr('fill','#ffffff')
+    .attr('stroke', '#000000')
+    .attr('stroke-width', '0.3')
+    .attr('paint-order', 'stroke')
     .text(function(d){ return getSigla(d); });
 }
 
@@ -947,12 +942,10 @@ function renderMapFat(states){
   (states||[]).forEach(function(s){ ufMap[s.location]={customers:s.customerCount,revenue:s.totalRevenue}; });
 
   var valores = Object.values(ufMap).map(function(v){ return v.revenue; }).filter(function(v){ return v > 0; });
-  var minF = valores.length > 0 ? Math.min.apply(null, valores) : 0;
-  var maxF = valores.length > 0 ? Math.max.apply(null, valores) : 1;
   var dark = document.documentElement.getAttribute('data-theme')==='dark';
 
-  var faixas = calcularFaixas(valores, 5);
-  renderLegendaEx('leg-fat', faixas, minF, maxF, dark, function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); });
+  // Renderizar legenda com valores reais
+  renderLegendaEx('leg-fat', valores, dark, function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); });
 
   var sortedFat = valores.slice().sort(function(a,b){return a-b;});
   var getColor = function(value) {
@@ -973,8 +966,8 @@ function renderMapFat(states){
   g.selectAll('path').data(GEO_DATA.features).enter().append('path')
     .attr('class','state-path').attr('d',path)
     .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].revenue:0); })
-    .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
-    .attr('stroke-width', '0.5')
+    .attr('stroke', '#1a1d27')
+    .attr('stroke-width', '2')
     .on('mouseenter',function(event,d){ var s=getSigla(d); showMapTip(event,s+(ufMap[s]?': '+fmt(ufMap[s].revenue):'')); })
     .on('mousemove',moveMapTip).on('mouseleave',hideMapTip)
     .on('click',function(event,d){
@@ -985,8 +978,11 @@ function renderMapFat(states){
     });
   g.selectAll('text').data(GEO_DATA.features).enter().append('text')
     .attr('transform',function(d){ var c=path.centroid(d); return 'translate('+c+')'; })
-    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','9').attr('font-weight','700').attr('pointer-events','none')
-    .attr('fill',function(d){ var s=getSigla(d),v=ufMap[s]?ufMap[s].revenue:0; return (v/maxF)>.4?'#fff':(dark?'#c9d1d9':'#334155'); })
+    .attr('text-anchor','middle').attr('dy','0.35em').attr('font-size','10').attr('font-weight','800').attr('pointer-events','none')
+    .attr('fill','#ffffff')
+    .attr('stroke', '#000000')
+    .attr('stroke-width', '0.3')
+    .attr('paint-order', 'stroke')
     .text(function(d){ return getSigla(d); });
 }
 
@@ -1082,14 +1078,11 @@ function renderDrillMap(geo, uf, stateName, mode) {
 
       var useVal = mode==='faturamento';
       var valores = cities.map(function(c){ return useVal?c.totalRevenue:c.customerCount; }).filter(function(v){ return v>0; });
-      var minVal = valores.length>0?Math.min.apply(null,valores):0;
-      var maxVal = valores.length>0?Math.max.apply(null,valores):1;
       // Array ordenado para escala por rank — distribui cores uniformemente ignorando outliers
       var sortedVals = valores.slice().sort(function(a,b){return a-b;});
 
-      var faixas = calcularFaixas(valores, 5);
       var formatFn = useVal ? function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); } : null;
-      renderLegendaEx('drill-legend-'+mode, faixas, minVal, maxVal, dark, formatFn);
+      renderLegendaEx('drill-legend-'+mode, valores, dark, formatFn);
 
       var getColor = function(value) {
         if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
@@ -1117,8 +1110,8 @@ function renderDrillMap(geo, uf, stateName, mode) {
           .attr('class','mun-path'+(hasData?' has-data':''))
           .attr('d',path)
           .attr('fill', hasData ? getColor(val) : (dark?'#161922':'#edf2f7'))
-          .attr('stroke', dark ? '#2a2d3e' : '#cbd5e1')
-          .attr('stroke-width', '0.4')
+          .attr('stroke', '#1a1d27')
+          .attr('stroke-width', '1.2')
           .attr('opacity', hasData ? 1 : 0.5)
           .on('mouseenter',function(event){
             var label = feature.properties.name||'';
