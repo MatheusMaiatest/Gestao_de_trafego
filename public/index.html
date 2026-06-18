@@ -754,8 +754,8 @@ function getHeatColorEx(value, min, max, dark) {
 
 // Versão com escala logarítmica base 10 — comprime outliers extremos de forma mais agressiva
 function getHeatColorByRank(value, sortedValues, dark, debugPrefix) {
-  if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-  if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
+  if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
+  if (!sortedValues || sortedValues.length === 0) return dark ? '#3a3d4a' : '#b8bcc8';
   
   // Estatísticas da distribuição
   var min = sortedValues[0];
@@ -937,7 +937,7 @@ function renderMapNF(states){
   var maxNF = sortedNF[sortedNF.length - 1] || 1;
   console.log('[MAP NF] Total valores:', valores.length, '| Min:', minNF, '| Max:', maxNF);
   var getColor = function(value) {
-    if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+    if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
     return getHeatColorByRank(value, sortedNF, dark, 'ESTADO-CLIENTES');
   };
 
@@ -996,7 +996,7 @@ function renderMapFat(states){
   var maxFat = sortedFat[sortedFat.length - 1] || 1;
   console.log('[MAP FAT] Total valores:', valores.length, '| Min:', minFat, '| Max:', maxFat);
   var getColor = function(value) {
-    if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+    if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
     return getHeatColorByRank(value, sortedFat, dark, 'ESTADO-FATURAMENTO');
   };
 
@@ -1156,7 +1156,7 @@ function renderDrillMap(geo, uf, stateName, mode) {
       renderLegendaEx('drill-legend-'+mode, valores, dark, formatFn);
 
       var getColor = function(value) {
-        if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
+        if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
         return getHeatColorByRank(value, sortedVals, dark, 'DRILL-'+mode.toUpperCase()+'-'+uf);
       };
 
@@ -1182,10 +1182,10 @@ function renderDrillMap(geo, uf, stateName, mode) {
           .datum(feature)
           .attr('class','mun-path'+(hasData?' has-data':''))
           .attr('d',path)
-          .attr('fill', hasData ? getColor(val) : (dark?'#161922':'#edf2f7'))
+          .attr('fill', hasData ? getColor(val) : (dark?'#3a3d4a':'#b8bcc8'))
           .attr('stroke', dark ? '#0d0f18' : '#c8cfe8')
           .attr('stroke-width', '0.2')
-          .attr('opacity', hasData ? 1 : 0.5)
+          .attr('opacity', hasData ? 1 : 0.6)
           .on('mouseenter',function(event){
             var label = feature.properties.name||'';
             if(hasData){
