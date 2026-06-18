@@ -172,10 +172,8 @@ class TrafficService {
       
       const [products] = await conn.execute(query, params);
 
-      // Buscar métricas agregadas por plataforma no período
-      const [platformMetrics] = await Promise.all([
-        this.getPlatformMetrics(startDate, endDate, platform)
-      ]);
+      // Buscar métricas agregadas por plataforma no período (UMA VEZ APENAS)
+      const platformMetrics = await this.getPlatformMetrics(startDate, endDate, platform);
 
       // Processar produtos com métricas agregadas
       const productsWithData = products.map(product => {
@@ -229,14 +227,14 @@ class TrafficService {
           const [fbData] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
-              SUM(spend) as investment,
-              SUM(clicks) as clicks,
-              SUM(value_offsite_conversion_fb_pixel_purchase) as revenue
+              COALESCE(SUM(spend), 0) as investment,
+              COALESCE(SUM(clicks), 0) as clicks,
+              COALESCE(SUM(value_offsite_conversion_fb_pixel_purchase), 0) as revenue
             FROM facebook_campanhas
             WHERE metric_date BETWEEN ? AND ?
           `, [startDate, endDate]);
           
-          if (fbData[0]) {
+          if (fbData[0] && fbData[0].campaigns > 0) {
             const fb = fbData[0];
             totalInvestment += parseFloat(fb.investment || 0);
             totalClicks += parseInt(fb.clicks || 0);
@@ -260,14 +258,14 @@ class TrafficService {
           const [googleData] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
-              SUM(metrics_cost) as investment,
-              SUM(metrics_clicks) as clicks,
-              SUM(metrics_conversionsvalue) as revenue
+              COALESCE(SUM(metrics_cost), 0) as investment,
+              COALESCE(SUM(metrics_clicks), 0) as clicks,
+              COALESCE(SUM(metrics_conversionsvalue), 0) as revenue
             FROM googleads_custom_report
             WHERE segments_date BETWEEN ? AND ?
           `, [startDate, endDate]);
           
-          if (googleData[0]) {
+          if (googleData[0] && googleData[0].campaigns > 0) {
             const google = googleData[0];
             totalInvestment += parseFloat(google.investment || 0);
             totalClicks += parseInt(google.clicks || 0);
@@ -291,14 +289,14 @@ class TrafficService {
           const [tiktokData] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
-              SUM(spend) as investment,
-              SUM(clicks) as clicks,
-              SUM(total_purchase) as revenue
+              COALESCE(SUM(spend), 0) as investment,
+              COALESCE(SUM(clicks), 0) as clicks,
+              COALESCE(SUM(total_purchase), 0) as revenue
             FROM tiktokads_reports_campaign_report
             WHERE metric_date BETWEEN ? AND ?
           `, [startDate, endDate]);
           
-          if (tiktokData[0]) {
+          if (tiktokData[0] && tiktokData[0].campaigns > 0) {
             const tiktok = tiktokData[0];
             totalInvestment += parseFloat(tiktok.investment || 0);
             totalClicks += parseInt(tiktok.clicks || 0);
