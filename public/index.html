@@ -2004,6 +2004,11 @@ function getLocationFilters() {
     state: cb.dataset.state
   }));
   
+  console.log('🔍 getLocationFilters - Raw values:', {
+    states: selectedStates,
+    cities: selectedCities.map(c => `"${c.city}" | "${c.state}"`)
+  });
+  
   return { states: selectedStates, cities: selectedCities };
 }
 

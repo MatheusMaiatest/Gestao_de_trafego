@@ -747,7 +747,9 @@ app.get('/api/segments/:type/customers', async (req, res) => {
         return { city: city.trim().toUpperCase(), state: state.trim().toUpperCase() };
       });
       
-      logger.info(`Filtering by ${cityList.length} cities`);
+      logger.info(`Filtering by ${cityList.length} cities:`);
+      cityList.forEach(f => logger.info(`  Filter: city="${f.city}" state="${f.state}"`));
+      
       const before = clients.length;
       clients = clients.filter(c => {
         const clientCity = (c.city || '').trim().toUpperCase();
@@ -755,6 +757,12 @@ app.get('/api/segments/:type/customers', async (req, res) => {
         const match = cityList.some(filter => 
           filter.city === clientCity && filter.state === clientState
         );
+        
+        // Log primeiros 5 não-matches para debug
+        if (!match && before - clients.length < 5) {
+          logger.info(`  NO MATCH: client "${c.name}": city="${clientCity}" state="${clientState}"`);
+        }
+        
         return match;
       });
       logger.info(`After city filter: ${clients.length} clients (filtered out ${before - clients.length})`);
@@ -1126,6 +1134,32 @@ app.get('/api/location/cities', async (req, res) => {
     res.json({ cities });
   } catch (err) {
     logger.error('location cities: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DEBUG: Verificar dados de localização ─────────────────────
+app.get('/api/location/debug', async (req, res) => {
+  const { state, city } = req.query;
+  try {
+    const conn = await pool.getConnection();
+    
+    // Buscar clientes com a cidade especificada
+    const [clients] = await conn.execute(`
+      SELECT id, city, state
+      FROM clientes_tray_ecommerce
+      WHERE state = ? AND city LIKE ?
+      LIMIT 10
+    `, [state || 'BA', `%${city || 'Feira'}%`]);
+    
+    conn.release();
+    res.json({ 
+      searchParams: { state: state || 'BA', cityPattern: city || 'Feira' },
+      found: clients.length,
+      samples: clients 
+    });
+  } catch (err) {
+    logger.error('location debug: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });
