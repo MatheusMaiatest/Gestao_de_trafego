@@ -2025,16 +2025,38 @@ async function loadDisparo(){
   try{
     let queryParams = `startDate=${s}&endDate=${e}&businessUnit=${bu}`;
     
+    console.log('🔍 DEBUG - Filtros de Localização:', location);
+    
     // Adicionar filtros de localização
     if (location.states.length > 0) {
       queryParams += `&states=${location.states.join(',')}`;
+      console.log('📍 Estados selecionados:', location.states);
+    } else {
+      console.log('⚠️ Nenhum estado selecionado!');
     }
     if (location.cities.length > 0) {
       const citiesParam = location.cities.map(c => `${c.city}|${c.state}`).join(',');
       queryParams += `&cities=${encodeURIComponent(citiesParam)}`;
+      console.log('🏙️ Cidades selecionadas:', location.cities.length, 'cidades');
     }
     
+    console.log('🌐 URL da API:', `/segments/${seg}/customers?${queryParams}`);
+    
     const d=await api(`/segments/${seg}/customers?${queryParams}`);
+    
+    console.log('📊 Resposta da API:', d);
+    console.log('👥 Total de clientes retornados:', d.customers?.length || 0);
+    
+    // Log de amostra de clientes (primeiros 5)
+    if (d.customers && d.customers.length > 0) {
+      console.log('📋 Primeiros 5 clientes (amostra):');
+      d.customers.slice(0, 5).forEach((c, i) => {
+        console.log(`  ${i+1}. ${c.name} - Cidade: "${c.city || 'VAZIO'}" / Estado: "${c.state || 'VAZIO'}"`);
+      });
+    } else {
+      console.log('❌ Nenhum cliente retornado pela API!');
+    }
+    
     dmData=d.customers||[];dmPage=1;
     document.getElementById('dm-cnt').textContent=`${fmtN(dmData.length)} clientes`;
     renderDisparoTable(seg);
@@ -2045,6 +2067,7 @@ async function loadDisparo(){
       {l:'Pot. Faturamento',v:fmt(sp),c:'accent',tip:'Faturamento histórico total destes clientes - potencial de reativação'},
     ].map(k=>`<div class="kpi-card ${k.c}" title="${k.tip}"><div class="kpi-lbl">${k.l}</div><div class="kpi-val">${k.v}</div></div>`).join('');
   }catch(err){
+    console.error('❌ ERRO no loadDisparo:', err);
     document.getElementById('dm-tbody').innerHTML=`<tr><td colspan="11" style="color:var(--err);padding:14px;text-align:center">❌ ${err.message}</td></tr>`;
   } finally {
     if(btnDm){btnDm.disabled=false;btnDm.textContent='🔍 Buscar';}
@@ -2433,6 +2456,64 @@ window.addEventListener('click', (e) => {
     e.target.style.display = 'none';
   }
 });
+
+// ──────────────────────────────────────────────────────────
+// DEBUG: Console de logs na tela
+// ──────────────────────────────────────────────────────────
+function debugLog(message) {
+  console.log('[DEBUG]', message);
+  
+  // Criar elemento de debug se não existir
+  let debugBox = document.getElementById('debug-console');
+  if (!debugBox) {
+    debugBox = document.createElement('div');
+    debugBox.id = 'debug-console';
+    debugBox.style.cssText = `
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      width: 400px;
+      max-height: 300px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.9);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 10px;
+      border-radius: 4px;
+      z-index: 9999;
+      border: 1px solid #0f0;
+    `;
+    document.body.appendChild(debugBox);
+    
+    // Adicionar botão para fechar
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: #f00;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      padding: 2px 6px;
+    `;
+    closeBtn.onclick = () => debugBox.remove();
+    debugBox.appendChild(closeBtn);
+  }
+  
+  const time = new Date().toLocaleTimeString();
+  const logLine = document.createElement('div');
+  logLine.textContent = `[${time}] ${message}`;
+  logLine.style.borderBottom = '1px solid #333';
+  logLine.style.padding = '2px 0';
+  debugBox.appendChild(logLine);
+  
+  // Scroll para o final
+  debugBox.scrollTop = debugBox.scrollHeight;
+}
 
 async function loadTrafficRankings() {
   const s = document.getElementById('t-s').value;

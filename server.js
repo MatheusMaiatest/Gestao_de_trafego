@@ -644,6 +644,13 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     const [rows] = await conn.execute(
       `SELECT * FROM (${union}) t WHERE contato_id IS NOT NULL`);
 
+    // Buscar dados de localização do Tray (fonte correta)
+    const [trayLocationRows] = await conn.execute(`
+      SELECT id, cidade, estado FROM clientes_tray_ecommerce WHERE id IS NOT NULL
+      UNION ALL
+      SELECT id, cidade, estado FROM clientes_tray_distribuicao WHERE id IS NOT NULL
+    `);
+
     // Buscar emails e telefones via NF-e
     const [emailRows2] = await conn.execute(`
       SELECT contato_id, MAX(contato_email) AS email, MAX(contato_telefone) AS telefone
@@ -659,6 +666,16 @@ app.get('/api/segments/:type/customers', async (req, res) => {
       UNION ALL SELECT id, email FROM clientes_tray_distribuicao WHERE email IS NOT NULL AND email != ''`);
     conn.release();
 
+    const trayLocationMap = new Map();
+    trayLocationRows.forEach(r => {
+      if (r.id) {
+        trayLocationMap.set(String(r.id), {
+          city: r.cidade || null,
+          state: r.estado || null
+        });
+      }
+    });
+
     const eMap2 = new Map();
     emailRows2.forEach(r => eMap2.set(String(r.contato_id), { email:r.email||null, telefone:r.telefone||null }));
     const tMap2 = new Map();
@@ -670,13 +687,20 @@ app.get('/api/segments/:type/customers', async (req, res) => {
       const key = r.contato_id;
       const ci2 = eMap2.get(String(key)) || {};
       const te2 = tMap2.get(String(key)) || null;
+      
+      // Buscar localização correta do Tray
+      const trayLoc = trayLocationMap.get(String(key)) || {};
+      const correctCity = trayLoc.city || r.city || null;
+      const correctState = trayLoc.state || r.stateUF || r.state || null;
+      
       if (!map.has(key)) {
         map.set(key, {
           id: key, name: r.name,
           cpf: r.cpf || null,
           email: ci2.email || te2 || null,
           telefone: ci2.telefone || null,
-          city: r.city, state: r.stateUF || r.state,
+          city: correctCity,
+          state: correctState,
           orderCount: parseInt(r.orders)||0,
           totalSpent: parseFloat(r.spent)||0,
           firstDate: safeDate(r.firstDate),
@@ -693,16 +717,28 @@ app.get('/api/segments/:type/customers', async (req, res) => {
 
     let clients = [...map.values()];
     
+    logger.info(`Total clients before location filters: ${clients.length}`);
+    
     // APLICAR FILTROS DE LOCALIZAÇÃO
     if (states && states.length > 0) {
       const stateList = states.split(',').map(s => s.trim().toUpperCase());
-      logger.info(`Filtering by states: ${JSON.stringify(stateList)}`);
-      logger.info(`Clients before state filter: ${clients.length}`);
+      logger.info(`Filtering by ${stateList.length} states: ${JSON.stringify(stateList)}`);
+      
+      const before = clients.length;
       clients = clients.filter(c => {
         const clientState = (c.state || '').trim().toUpperCase();
-        return stateList.includes(clientState);
+        const match = stateList.includes(clientState);
+        return match;
       });
-      logger.info(`Clients after state filter: ${clients.length}`);
+      logger.info(`After state filter: ${clients.length} clients (filtered out ${before - clients.length})`);
+      
+      // Log primeiros 3 clientes para debug
+      if (clients.length > 0) {
+        logger.info('Sample clients after state filter:');
+        clients.slice(0, 3).forEach(c => {
+          logger.info(`  - ${c.name}: city="${c.city || 'EMPTY'}", state="${c.state || 'EMPTY'}"`);
+        });
+      }
     }
     
     if (cities && cities.length > 0) {
@@ -711,21 +747,40 @@ app.get('/api/segments/:type/customers', async (req, res) => {
         return { city: city.trim().toUpperCase(), state: state.trim().toUpperCase() };
       });
       
-      logger.info(`Filtering by cities: ${JSON.stringify(cityList)}`);
-      logger.info(`Clients before city filter: ${clients.length}`);
+      logger.info(`Filtering by ${cityList.length} cities`);
+      const before = clients.length;
       clients = clients.filter(c => {
         const clientCity = (c.city || '').trim().toUpperCase();
         const clientState = (c.state || '').trim().toUpperCase();
         const match = cityList.some(filter => 
           filter.city === clientCity && filter.state === clientState
         );
-        if (!match && clients.length < 5) {
-          logger.info(`Client ${c.name}: city=${clientCity}, state=${clientState} - NO MATCH`);
-        }
         return match;
       });
-      logger.info(`Clients after city filter: ${clients.length}`);
+      logger.info(`After city filter: ${clients.length} clients (filtered out ${before - clients.length})`);
     }
+    
+    const vipLimit = Math.ceil(clients.length * 0.1);
+    const sorted   = [...clients].sort((a,b) => b.totalSpent - a.totalSpent);
+    const sd = new Date(startDate), ed = new Date(endDate);
+
+    let filtered = [];
+    if (type==='vip')        filtered = sorted.slice(0, vipLimit);
+    if (type==='recorrente') filtered = clients.filter(c => c.orderCount >= 3);
+    if (type==='novo')       filtered = clients.filter(c => {
+      const fp = c.firstDate ? new Date(c.firstDate) : null;
+      return fp && fp >= sd && fp <= ed;
+    });
+    if (type==='inativo')    filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 90);
+    if (type==='em_risco')   filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 30 && c.daysSince <= 90);
+
+    logger.info(`Final result for segment ${type}: ${filtered.length} clients`);
+    res.json({ segment:type, customerCount:filtered.length, customers:filtered });
+  } catch (err) {
+    logger.error('segments/customers: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
     
     const vipLimit = Math.ceil(clients.length * 0.1);
     const sorted   = [...clients].sort((a,b) => b.totalSpent - a.totalSpent);
