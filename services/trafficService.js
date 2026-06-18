@@ -139,20 +139,26 @@ class TrafficService {
   // ANÁLISE POR PRODUTO
   // ──────────────────────────────────────────────────────────
   async getProductAnalysis(filters) {
-    const { startDate, endDate, platform, campaign, limit = 100 } = filters;
+    const { startDate, endDate, platform, campaign, limit = 100, showIndividual = false } = filters;
     const conn = await this.pool.getConnection();
     
     try {
       const limitValue = parseInt(limit);
       
       // Query SUPER otimizada - SEM arquivos temporários
-      // Usa subquery mais eficiente e limita logo no início
+      // Filtra kits vs produtos individuais conforme solicitado
+      const kitCondition = showIndividual === 'true' || showIndividual === true
+        ? `AND (pvt.product_kit_id IS NOT NULL AND pvt.product_kit_id != '' AND pvt.product_kit_id != '0')`
+        : `AND (pvt.product_kit_id IS NULL OR pvt.product_kit_id = '' OR pvt.product_kit_id = '0')`;
+      
       const query = `
         SELECT 
           pvt.product_id,
           pvt.name AS product_name,
           pvt.reference AS sku,
           pvt.brand,
+          pvt.product_kit_id,
+          pvt.product_kit_id_kit,
           SUM(pvt.quantity) AS quantity_sold,
           ROUND(SUM(pvt.price * pvt.quantity), 2) AS revenue,
           ROUND(SUM(COALESCE(pvt.cost_price, 0) * pvt.quantity), 2) AS cost,
@@ -162,7 +168,8 @@ class TrafficService {
           SELECT id FROM pedidos_ecommerce_tray
           WHERE date BETWEEN ? AND ?
         )
-        GROUP BY pvt.product_id, pvt.name, pvt.reference, pvt.brand
+        ${kitCondition}
+        GROUP BY pvt.product_id, pvt.name, pvt.reference, pvt.brand, pvt.product_kit_id, pvt.product_kit_id_kit
         ORDER BY revenue DESC
         LIMIT ${limitValue}
       `;
@@ -189,6 +196,11 @@ class TrafficService {
         const estimatedInvestment = platformMetrics.totalInvestment * productShare;
         const estimatedClicks = Math.round(platformMetrics.totalClicks * productShare);
         
+        // Identificar se veio de kit
+        const isFromKit = product.product_kit_id && 
+                         product.product_kit_id !== '' && 
+                         product.product_kit_id !== '0';
+        
         return {
           product_id: product.product_id,
           product_name: product.product_name,
@@ -200,7 +212,9 @@ class TrafficService {
           profit,
           investment: parseFloat(estimatedInvestment.toFixed(2)),
           clicks: estimatedClicks,
+          is_from_kit: isFromKit,
           platform_summary: platformMetrics.platforms,
+          platform_campaigns: platformMetrics.platformCampaigns,
           campaigns_count: platformMetrics.totalCampaigns,
           campaign_links: platformMetrics.platformLinks,
           roi: estimatedInvestment > 0 ? parseFloat(((revenue - estimatedInvestment) / estimatedInvestment * 100).toFixed(2)) : 0,
@@ -226,11 +240,13 @@ class TrafficService {
       let totalCampaigns = 0;
       const platforms = [];
       const platformLinks = [];
+      const platformCampaigns = [];
 
       // Facebook
+      let fbData = null;
       if (platform === 'all' || platform === 'facebook') {
         try {
-          const [fbData] = await conn.execute(`
+          const [result] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
               COALESCE(SUM(spend), 0) as investment,
@@ -239,18 +255,22 @@ class TrafficService {
             FROM facebook_campanhas
             WHERE metric_date BETWEEN ? AND ?
           `, [startDate, endDate]);
+          fbData = result[0];
           
-          if (fbData[0] && fbData[0].campaigns > 0) {
-            const fb = fbData[0];
-            totalInvestment += parseFloat(fb.investment || 0);
-            totalClicks += parseInt(fb.clicks || 0);
-            totalRevenue += parseFloat(fb.revenue || 0);
-            totalCampaigns += parseInt(fb.campaigns || 0);
+          if (fbData && fbData.campaigns > 0) {
+            totalInvestment += parseFloat(fbData.investment || 0);
+            totalClicks += parseInt(fbData.clicks || 0);
+            totalRevenue += parseFloat(fbData.revenue || 0);
+            totalCampaigns += parseInt(fbData.campaigns || 0);
             platforms.push('Facebook');
             platformLinks.push({
               platform: 'Facebook',
               url: 'https://business.facebook.com/adsmanager',
               label: 'Gerenciador de Anúncios Facebook'
+            });
+            platformCampaigns.push({
+              platform: 'Facebook',
+              campaigns: parseInt(fbData.campaigns || 0)
             });
           }
         } catch (err) {
@@ -259,9 +279,10 @@ class TrafficService {
       }
 
       // Google
+      let googleData = null;
       if (platform === 'all' || platform === 'google') {
         try {
-          const [googleData] = await conn.execute(`
+          const [result] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
               COALESCE(SUM(metrics_cost), 0) as investment,
@@ -270,18 +291,22 @@ class TrafficService {
             FROM googleads_custom_report
             WHERE segments_date BETWEEN ? AND ?
           `, [startDate, endDate]);
+          googleData = result[0];
           
-          if (googleData[0] && googleData[0].campaigns > 0) {
-            const google = googleData[0];
-            totalInvestment += parseFloat(google.investment || 0);
-            totalClicks += parseInt(google.clicks || 0);
-            totalRevenue += parseFloat(google.revenue || 0);
-            totalCampaigns += parseInt(google.campaigns || 0);
+          if (googleData && googleData.campaigns > 0) {
+            totalInvestment += parseFloat(googleData.investment || 0);
+            totalClicks += parseInt(googleData.clicks || 0);
+            totalRevenue += parseFloat(googleData.revenue || 0);
+            totalCampaigns += parseInt(googleData.campaigns || 0);
             platforms.push('Google');
             platformLinks.push({
               platform: 'Google',
               url: 'https://ads.google.com',
               label: 'Google Ads'
+            });
+            platformCampaigns.push({
+              platform: 'Google',
+              campaigns: parseInt(googleData.campaigns || 0)
             });
           }
         } catch (err) {
@@ -290,9 +315,10 @@ class TrafficService {
       }
 
       // TikTok
+      let tiktokData = null;
       if (platform === 'all' || platform === 'tiktok') {
         try {
-          const [tiktokData] = await conn.execute(`
+          const [result] = await conn.execute(`
             SELECT 
               COUNT(DISTINCT campaign_id) as campaigns,
               COALESCE(SUM(spend), 0) as investment,
@@ -301,18 +327,22 @@ class TrafficService {
             FROM tiktokads_reports_campaign_report
             WHERE metric_date BETWEEN ? AND ?
           `, [startDate, endDate]);
+          tiktokData = result[0];
           
-          if (tiktokData[0] && tiktokData[0].campaigns > 0) {
-            const tiktok = tiktokData[0];
-            totalInvestment += parseFloat(tiktok.investment || 0);
-            totalClicks += parseInt(tiktok.clicks || 0);
-            totalRevenue += parseFloat(tiktok.revenue || 0);
-            totalCampaigns += parseInt(tiktok.campaigns || 0);
+          if (tiktokData && tiktokData.campaigns > 0) {
+            totalInvestment += parseFloat(tiktokData.investment || 0);
+            totalClicks += parseInt(tiktokData.clicks || 0);
+            totalRevenue += parseFloat(tiktokData.revenue || 0);
+            totalCampaigns += parseInt(tiktokData.campaigns || 0);
             platforms.push('TikTok');
             platformLinks.push({
               platform: 'TikTok',
               url: 'https://ads.tiktok.com',
               label: 'TikTok Ads Manager'
+            });
+            platformCampaigns.push({
+              platform: 'TikTok',
+              campaigns: parseInt(tiktokData.campaigns || 0)
             });
           }
         } catch (err) {
@@ -326,7 +356,8 @@ class TrafficService {
         totalRevenue,
         totalCampaigns,
         platforms,
-        platformLinks
+        platformLinks,
+        platformCampaigns
       };
     } finally {
       conn.release();
@@ -441,6 +472,74 @@ class TrafficService {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, limit);
 
+    } finally {
+      conn.release();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // CLIENTES QUE COMPRARAM UM PRODUTO ESPECÍFICO
+  // ──────────────────────────────────────────────────────────
+  async getProductCustomers(productId, startDate, endDate) {
+    const conn = await this.pool.getConnection();
+    try {
+      const query = `
+        SELECT DISTINCT
+          c.id as customer_id,
+          c.name as customer_name,
+          c.cpf,
+          c.cnpj,
+          c.email,
+          c.phone as telefone,
+          c.city as cidade,
+          c.state as estado,
+          COUNT(DISTINCT pvt.order_id) as total_orders,
+          SUM(pvt.quantity) as total_quantity,
+          ROUND(SUM(pvt.price * pvt.quantity), 2) as total_spent
+        FROM produtos_vendidos_tray_ecommerce pvt
+        INNER JOIN pedidos_ecommerce_tray p ON pvt.order_id = p.id
+        INNER JOIN clientes_tray_ecommerce c ON p.customer_id = c.id
+        WHERE pvt.product_id = ?
+          AND p.date BETWEEN ? AND ?
+        GROUP BY c.id, c.name, c.cpf, c.cnpj, c.email, c.phone, c.city, c.state
+        ORDER BY total_spent DESC
+      `;
+      
+      const [customers] = await conn.execute(query, [productId, startDate, endDate]);
+      return customers;
+    } finally {
+      conn.release();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // DETALHES DE COMPRAS DE UM CLIENTE EM UM PRODUTO
+  // ──────────────────────────────────────────────────────────
+  async getCustomerProductPurchases(customerId, productId, startDate, endDate) {
+    const conn = await this.pool.getConnection();
+    try {
+      const query = `
+        SELECT 
+          p.id as order_id,
+          p.date as order_date,
+          p.status as order_status,
+          pvt.quantity,
+          pvt.price as unit_price,
+          ROUND(pvt.price * pvt.quantity, 2) as total_price,
+          p.payment_form,
+          p.shipment,
+          p.shipment_value,
+          p.discount
+        FROM produtos_vendidos_tray_ecommerce pvt
+        INNER JOIN pedidos_ecommerce_tray p ON pvt.order_id = p.id
+        WHERE p.customer_id = ?
+          AND pvt.product_id = ?
+          AND p.date BETWEEN ? AND ?
+        ORDER BY p.date DESC
+      `;
+      
+      const [purchases] = await conn.execute(query, [customerId, productId, startDate, endDate]);
+      return purchases;
     } finally {
       conn.release();
     }

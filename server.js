@@ -1032,16 +1032,46 @@ app.get('/api/traffic/dashboard', async (req, res) => {
 
 // ── Análise por Produto ────────────────────────────────────────
 app.get('/api/traffic/products', async (req, res) => {
-  const { startDate, endDate, platform = 'all', campaign, limit = 100 } = req.query;
+  const { startDate, endDate, platform = 'all', campaign, limit = 100, showIndividual = 'false' } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
   
   try {
     const products = await trafficService.getProductAnalysis({ 
-      startDate, endDate, platform, campaign, limit: parseInt(limit) 
+      startDate, endDate, platform, campaign, limit: parseInt(limit), showIndividual 
     });
     res.json({ products, total: products.length });
   } catch (err) {
     logger.error('traffic products: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Clientes de um Produto ─────────────────────────────────────
+app.get('/api/traffic/product/:productId/customers', async (req, res) => {
+  const { productId } = req.params;
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  
+  try {
+    const customers = await trafficService.getProductCustomers(productId, startDate, endDate);
+    res.json({ customers });
+  } catch (err) {
+    logger.error('product customers: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Compras de um Cliente em um Produto ────────────────────────
+app.get('/api/traffic/customer/:customerId/product/:productId/purchases', async (req, res) => {
+  const { customerId, productId } = req.params;
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios.' });
+  
+  try {
+    const purchases = await trafficService.getCustomerProductPurchases(customerId, productId, startDate, endDate);
+    res.json({ purchases });
+  } catch (err) {
+    logger.error('customer purchases: ' + err.message);
     res.status(500).json({ error: err.message });
   }
 });
