@@ -710,14 +710,16 @@ var CHART_COLORS_MAP = ['#5c6bc0','#42a5f5','#ab47bc','#26a69a','#ef5350','#ffa7
 
 function getHeatColorEx(value, min, max, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-  if (max <= min) return '#8b0000';
+  if (max <= 0) return '#8b0000';
 
-  // Escala LOGARÍTMICA — ideal para dados com grande dispersão (ex: R$19 até R$2M)
-  // log10 comprime outliers e espalha visualmente os valores menores
-  var logMin = Math.log10(Math.max(1, min));
-  var logMax = Math.log10(Math.max(1, max));
-  var logVal = Math.log10(Math.max(1, value));
-  var t = logMax > logMin ? (logVal - logMin) / (logMax - logMin) : 0;
+  // Escala: raiz quadrada a partir do ZERO (não do mínimo).
+  // Isso garante que o maior valor sempre fica vermelho escuro,
+  // e os valores menores ficam proporcionalmente mais verdes —
+  // independentemente de qual é o mínimo da amostra.
+  // Ex: Feira R$2,09M → t=1.0 (vermelho escuro)
+  //     Salvador R$473k → t=sqrt(473k/2094k)=0.476 (laranja)
+  //     Cidade R$9k → t=sqrt(9k/2094k)=0.065 (verde)
+  var t = Math.sqrt(value / max);
   t = Math.max(0, Math.min(1, t));
 
   // 14 nuances: verde → amarelo → laranja → vermelho → bordô
