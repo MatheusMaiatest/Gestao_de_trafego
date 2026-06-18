@@ -953,7 +953,13 @@ function renderMapNF(states){
   var g=svg.append('g');
   g.selectAll('path').data(GEO_DATA.features).enter().append('path')
     .attr('class','state-path').attr('d',path)
-    .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].customers:0); })
+    .attr('fill',function(d){ 
+      var uf = getSigla(d);
+      var val = ufMap[uf] ? ufMap[uf].customers : 0;
+      var color = getColor(val);
+      console.log('[RENDER STATE]', uf, '| valor:', val, '| cor:', color);
+      return color;
+    })
     .attr('stroke', '#0d0f18')
     .attr('stroke-width', '0.3')
     .on('mouseenter',function(event,d){ var uf=getSigla(d); showMapTip(event,uf+(ufMap[uf]?': '+fmtN(ufMap[uf].customers)+' clientes':'')); })
@@ -1006,7 +1012,13 @@ function renderMapFat(states){
   var g=svg.append('g');
   g.selectAll('path').data(GEO_DATA.features).enter().append('path')
     .attr('class','state-path').attr('d',path)
-    .attr('fill',function(d){ return getColor(ufMap[getSigla(d)]?ufMap[getSigla(d)].revenue:0); })
+    .attr('fill',function(d){ 
+      var uf = getSigla(d);
+      var val = ufMap[uf] ? ufMap[uf].revenue : 0;
+      var color = getColor(val);
+      console.log('[RENDER STATE FAT]', uf, '| valor:', val.toFixed(2), '| cor:', color);
+      return color;
+    })
     .attr('stroke', '#0d0f18')
     .attr('stroke-width', '0.3')
     .on('mouseenter',function(event,d){ var s=getSigla(d); showMapTip(event,s+(ufMap[s]?': '+fmt(ufMap[s].revenue):'')); })
