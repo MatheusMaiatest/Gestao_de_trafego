@@ -938,7 +938,7 @@ function renderMapNF(states){
   console.log('[MAP NF] Total valores:', valores.length, '| Min:', minNF, '| Max:', maxNF);
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
-    return getHeatColorByRank(value, sortedNF, dark, 'ESTADO-CLIENTES');
+    return getHeatColorEx(value, minNF, maxNF, dark);
   };
 
   var W=460,H=400;
@@ -997,7 +997,7 @@ function renderMapFat(states){
   console.log('[MAP FAT] Total valores:', valores.length, '| Min:', minFat, '| Max:', maxFat);
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
-    return getHeatColorByRank(value, sortedFat, dark, 'ESTADO-FATURAMENTO');
+    return getHeatColorEx(value, minFat, maxFat, dark);
   };
 
   var W=460,H=400;
@@ -1157,7 +1157,7 @@ function renderDrillMap(geo, uf, stateName, mode) {
 
       var getColor = function(value) {
         if (!value || value === 0) return dark ? '#3a3d4a' : '#b8bcc8';
-        return getHeatColorByRank(value, sortedVals, dark, 'DRILL-'+mode.toUpperCase()+'-'+uf);
+        return getHeatColorEx(value, minVal, maxVal, dark);
       };
 
       var svgEl = document.getElementById(svgDrillId);
