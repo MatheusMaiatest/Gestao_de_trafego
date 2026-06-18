@@ -366,7 +366,7 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
         <input type="text" id="t-product-search" class="search-input" placeholder="Buscar produto..." style="flex:1"/>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.82rem">
           <input type="checkbox" id="t-show-individual" onchange="toggleProductView()" style="cursor:pointer"/>
-          <span>Mostrar Produtos Individuais (de Kits)</span>
+          <span>Produtos Individuais (sem Kits)</span>
         </label>
         <span id="t-product-count" style="font-size:.72rem;color:var(--tm)"></span>
       </div>
@@ -2145,8 +2145,8 @@ async function loadTrafficProducts() {
         platformLinksHtml += '</select>';
       }
       
-      // Ícone de kit se for produto individual vindo de kit
-      const kitIcon = p.is_from_kit ? '<span class="kit-icon" title="Este produto veio de um kit">🎁 KIT</span>' : '';
+      // Ícone indicando que é produto individual (não é kit)
+      const kitIcon = p.is_from_kit ? '<span class="kit-icon" title="Produto individual (não é kit)">📦 INDIVIDUAL</span>' : '';
       
       return `
       <tr class="clickable-row" onclick="openProductCustomersModal('${p.product_id}', '${p.product_name.replace(/'/g, "\\'")}')">

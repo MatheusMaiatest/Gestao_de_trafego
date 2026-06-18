@@ -146,10 +146,10 @@ class TrafficService {
       const limitValue = parseInt(limit);
       
       // Query SUPER otimizada - SEM arquivos temporários
-      // Filtra kits vs produtos individuais conforme solicitado
+      // Filtra kits vs produtos individuais pelo NOME
       const kitCondition = showIndividual === 'true' || showIndividual === true
-        ? `AND (pvt.product_kit_id IS NOT NULL AND pvt.product_kit_id != '' AND pvt.product_kit_id != '0')`
-        : `AND (pvt.product_kit_id IS NULL OR pvt.product_kit_id = '' OR pvt.product_kit_id = '0')`;
+        ? `AND LOWER(pvt.name) NOT LIKE '%kit%'`  // Produtos individuais (SEM "kit" no nome)
+        : `AND LOWER(pvt.name) LIKE '%kit%'`;      // Kits (COM "kit" no nome)
       
       const query = `
         SELECT 
@@ -196,10 +196,8 @@ class TrafficService {
         const estimatedInvestment = platformMetrics.totalInvestment * productShare;
         const estimatedClicks = Math.round(platformMetrics.totalClicks * productShare);
         
-        // Identificar se veio de kit
-        const isFromKit = product.product_kit_id && 
-                         product.product_kit_id !== '' && 
-                         product.product_kit_id !== '0';
+        // Identificar se é produto individual (não tem "kit" no nome)
+        const isIndividual = !product.product_name.toLowerCase().includes('kit');
         
         return {
           product_id: product.product_id,
@@ -212,7 +210,7 @@ class TrafficService {
           profit,
           investment: parseFloat(estimatedInvestment.toFixed(2)),
           clicks: estimatedClicks,
-          is_from_kit: isFromKit,
+          is_from_kit: isIndividual && (showIndividual === 'true' || showIndividual === true),
           platform_summary: platformMetrics.platforms,
           platform_campaigns: platformMetrics.platformCampaigns,
           campaigns_count: platformMetrics.totalCampaigns,
