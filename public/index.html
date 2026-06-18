@@ -749,21 +749,25 @@ function getHeatColorEx(value, min, max, dark) {
   return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
 }
 
-// Versão por rank — usa posição no array ordenado para garantir distribuição uniforme de cores
-// Isso é o que faz o contraste ser máximo independente dos valores absolutos
+// Versão por proporção real dos valores — usa magnitude dos valores, não ranking
 function getHeatColorByRank(value, sortedValues, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
-  // Encontrar posição no array ordenado (rank)
-  var idx = 0;
-  for (var k = 0; k < sortedValues.length; k++) {
-    if (sortedValues[k] <= value) idx = k;
-    else break;
-  }
-  // t vai de 0 (menor valor) a 1 (maior valor) linearmente pelo rank
-  var t = sortedValues.length > 1 ? idx / (sortedValues.length - 1) : 1;
+  
+  // Calcular proporção baseada nos valores reais (min e max)
+  var min = sortedValues[0];
+  var max = sortedValues[sortedValues.length - 1];
+  
+  // Aplicar escala raiz quadrada para melhor distribuição visual
+  var sqMin = Math.sqrt(Math.max(0, min));
+  var sqMax = Math.sqrt(max);
+  var sqVal = Math.sqrt(value);
+  
+  // t vai de 0 (menor valor) a 1 (maior valor) baseado na MAGNITUDE
+  var t = sqMax > sqMin ? (sqVal - sqMin) / (sqMax - sqMin) : 0;
   t = Math.max(0, Math.min(1, t));
-  // Mapear diretamente na paleta de 14 cores — sem passar por outra escala
+  
+  // Mapear na paleta de 14 cores
   var stops = [
     [0.000, '#39b54a'],
     [0.077, '#5dc13a'],
