@@ -696,10 +696,13 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     // APLICAR FILTROS DE LOCALIZAÇÃO
     if (states && states.length > 0) {
       const stateList = states.split(',').map(s => s.trim().toUpperCase());
+      logger.info(`Filtering by states: ${JSON.stringify(stateList)}`);
+      logger.info(`Clients before state filter: ${clients.length}`);
       clients = clients.filter(c => {
         const clientState = (c.state || '').trim().toUpperCase();
         return stateList.includes(clientState);
       });
+      logger.info(`Clients after state filter: ${clients.length}`);
     }
     
     if (cities && cities.length > 0) {
@@ -708,13 +711,20 @@ app.get('/api/segments/:type/customers', async (req, res) => {
         return { city: city.trim().toUpperCase(), state: state.trim().toUpperCase() };
       });
       
+      logger.info(`Filtering by cities: ${JSON.stringify(cityList)}`);
+      logger.info(`Clients before city filter: ${clients.length}`);
       clients = clients.filter(c => {
         const clientCity = (c.city || '').trim().toUpperCase();
         const clientState = (c.state || '').trim().toUpperCase();
-        return cityList.some(filter => 
+        const match = cityList.some(filter => 
           filter.city === clientCity && filter.state === clientState
         );
+        if (!match && clients.length < 5) {
+          logger.info(`Client ${c.name}: city=${clientCity}, state=${clientState} - NO MATCH`);
+        }
+        return match;
       });
+      logger.info(`Clients after city filter: ${clients.length}`);
     }
     
     const vipLimit = Math.ceil(clients.length * 0.1);
