@@ -219,6 +219,8 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
 .clickable-row:hover{background:var(--bg2)}
 .kit-icon{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-radius:4px;padding:2px 6px;font-size:.65rem;font-weight:700;margin-left:6px;letter-spacing:.3px}
 .status-badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:.75rem;font-weight:600;background:var(--bg2);border:1px solid var(--bdr)}
+.btn-sm{background:var(--bg2);border:1px solid var(--bdr);color:var(--ts);border-radius:4px;cursor:pointer;transition:all var(--t);font-size:.75rem;font-weight:600}
+.btn-sm:hover{background:var(--ac);color:#fff;border-color:var(--ac)}
 @media(max-width:768px){.modal-content{width:98%;max-width:100%;max-height:90vh}.modal-body{padding:12px}}
 </style>
 </head>
@@ -644,6 +646,23 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
       <label class="sf-label">Unidade</label>
       <select id="dm-bu" class="sf-select"><option value="all">Todas</option><option value="ecommerce">E-commerce</option><option value="distributor">Distribuidor</option></select>
     </div>
+    <div class="sf-sec">
+      <label class="sf-label">Estado</label>
+      <div style="margin-bottom:6px">
+        <button class="btn-sm" onclick="toggleAllStates()" style="width:100%;padding:4px 8px;font-size:.75rem">Todas/Nenhuma</button>
+      </div>
+      <div id="dm-states-list" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;padding:4px;border:1px solid var(--bdr);border-radius:4px;background:var(--bg2)">
+        <div style="text-align:center;padding:12px;color:var(--tm);font-size:.75rem">Carregando...</div>
+      </div>
+    </div>
+    <div class="sf-sec" id="dm-cities-section" style="display:none">
+      <label class="sf-label">Cidades</label>
+      <div style="margin-bottom:6px">
+        <button class="btn-sm" onclick="toggleAllCities()" style="width:100%;padding:4px 8px;font-size:.75rem">Todas/Nenhuma</button>
+      </div>
+      <div id="dm-cities-list" style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;padding:4px;border:1px solid var(--bdr);border-radius:4px;background:var(--bg2)">
+      </div>
+    </div>
     <button class="btn-apply" onclick="loadDisparo()">🔍 Identificar</button>
     <div id="dm-cnt" style="font-size:.7rem;color:var(--tm);text-align:center;margin-top:4px"></div>
   </div>
@@ -798,7 +817,11 @@ function showTab(name,btn){
   btn.classList.add('active');
   if(name==='clientes'&&!cData.length) loadClientes();
   if(name==='relatorios'){syncDates('r');loadRKPIs();}
-  if(name==='disparo') syncDates('dm');
+  if(name==='disparo'){
+    syncDates('dm');
+    // Carregar estados se ainda não foram carregados
+    if(dmStatesData.length === 0) loadDisparoStates();
+  }
 }
 function syncDates(p){
   const s=document.getElementById('d-s')?.value,e=document.getElementById('d-e')?.value;
@@ -1891,18 +1914,127 @@ function dlRpt(){
 }
 
 // ══════════════════════════════════════════════════════════════
+// DISPARO - FILTROS DE LOCALIZAÇÃO
+// ══════════════════════════════════════════════════════════════
+let dmStatesData = [];
+let dmCitiesData = {};
+
+// Carregar lista de estados ao inicializar
+async function loadDisparoStates() {
+  try {
+    const result = await api('/location/states');
+    dmStatesData = result.states || [];
+    
+    const statesList = document.getElementById('dm-states-list');
+    if (dmStatesData.length === 0) {
+      statesList.innerHTML = '<div style="text-align:center;padding:12px;color:var(--tm);font-size:.75rem">Nenhum estado encontrado</div>';
+      return;
+    }
+    
+    statesList.innerHTML = dmStatesData.map(state => `
+      <label style="display:flex;align-items:center;gap:6px;font-size:.75rem;cursor:pointer;padding:2px">
+        <input type="checkbox" class="dm-state-cb" value="${state}" onchange="onStateChange()" checked style="cursor:pointer">
+        <span>${state}</span>
+      </label>
+    `).join('');
+    
+    // Carregar cidades inicialmente (todos os estados selecionados)
+    onStateChange();
+  } catch (err) {
+    console.error('Erro ao carregar estados:', err);
+    document.getElementById('dm-states-list').innerHTML = `<div style="text-align:center;padding:12px;color:var(--err);font-size:.75rem">Erro ao carregar</div>`;
+  }
+}
+
+// Quando estados são selecionados/deselecionados
+async function onStateChange() {
+  const selectedStates = Array.from(document.querySelectorAll('.dm-state-cb:checked')).map(cb => cb.value);
+  
+  if (selectedStates.length === 0) {
+    document.getElementById('dm-cities-section').style.display = 'none';
+    return;
+  }
+  
+  document.getElementById('dm-cities-section').style.display = 'block';
+  document.getElementById('dm-cities-list').innerHTML = '<div style="text-align:center;padding:12px;color:var(--tm);font-size:.75rem">Carregando cidades...</div>';
+  
+  try {
+    const result = await api(`/location/cities?states=${selectedStates.join(',')}`);
+    const cities = result.cities || [];
+    
+    if (cities.length === 0) {
+      document.getElementById('dm-cities-list').innerHTML = '<div style="text-align:center;padding:12px;color:var(--tm);font-size:.75rem">Nenhuma cidade encontrada</div>';
+      return;
+    }
+    
+    document.getElementById('dm-cities-list').innerHTML = cities.map(city => `
+      <label style="display:flex;align-items:center;gap:6px;font-size:.75rem;cursor:pointer;padding:2px">
+        <input type="checkbox" class="dm-city-cb" value="${city.city}" data-state="${city.state}" checked style="cursor:pointer">
+        <span>${city.city} - ${city.state}</span>
+      </label>
+    `).join('');
+  } catch (err) {
+    console.error('Erro ao carregar cidades:', err);
+    document.getElementById('dm-cities-list').innerHTML = `<div style="text-align:center;padding:12px;color:var(--err);font-size:.75rem">Erro ao carregar</div>`;
+  }
+}
+
+// Toggle todas os estados
+function toggleAllStates() {
+  const checkboxes = document.querySelectorAll('.dm-state-cb');
+  const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+  
+  checkboxes.forEach(cb => cb.checked = !allChecked);
+  onStateChange();
+}
+
+// Toggle todas as cidades
+function toggleAllCities() {
+  const checkboxes = document.querySelectorAll('.dm-city-cb');
+  const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+  
+  checkboxes.forEach(cb => cb.checked = !allChecked);
+}
+
+// Obter filtros de localização selecionados
+function getLocationFilters() {
+  const selectedStates = Array.from(document.querySelectorAll('.dm-state-cb:checked')).map(cb => cb.value);
+  const selectedCities = Array.from(document.querySelectorAll('.dm-city-cb:checked')).map(cb => ({
+    city: cb.value,
+    state: cb.dataset.state
+  }));
+  
+  return { states: selectedStates, cities: selectedCities };
+}
+
+// ══════════════════════════════════════════════════════════════
 // DISPARO
 async function loadDisparo(){
   const s=document.getElementById('dm-s').value,e=document.getElementById('dm-e').value;
   const seg=document.querySelector('input[name="dm-seg"]:checked')?.value||'inativo';
   const bu=document.getElementById('dm-bu').value;
+  const location = getLocationFilters();
+  
   if(!s||!e){alert('Selecione o período');return;}
   if(s>e){alert('A data de início não pode ser maior que a data de fim.');return;}
+  
   const btnDm=document.querySelector('#tab-disparo .btn-search');
   if(btnDm){btnDm.disabled=true;btnDm.textContent='⏳ Buscando...';}
   document.getElementById('dm-tbody').innerHTML='<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  
   try{
-    const d=await api(`/segments/${seg}/customers?startDate=${s}&endDate=${e}&businessUnit=${bu}`);
+    let queryParams = `startDate=${s}&endDate=${e}&businessUnit=${bu}`;
+    
+    // Adicionar filtros de localização
+    if (location.states.length > 0) {
+      queryParams += `&states=${location.states.join(',')}`;
+    }
+    if (location.cities.length > 0) {
+      const citiesParam = location.cities.map(c => `${c.city}|${c.state}`).join(',');
+      queryParams += `&cities=${encodeURIComponent(citiesParam)}`;
+    }
+    
+    const d=await api(`/segments/${seg}/customers?${queryParams}`);
     dmData=d.customers||[];dmPage=1;
     document.getElementById('dm-cnt').textContent=`${fmtN(dmData.length)} clientes`;
     renderDisparoTable(seg);

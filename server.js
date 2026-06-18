@@ -1016,6 +1016,51 @@ app.get('/api/campaign/metrics', async (req, res) => {
 const TrafficService = require('./services/trafficService');
 const trafficService = new TrafficService(pool);
 
+// ── Localização: Estados e Cidades ────────────────────────────
+app.get('/api/location/states', async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    const [states] = await conn.execute(`
+      SELECT DISTINCT state
+      FROM clientes_tray_ecommerce
+      WHERE state IS NOT NULL AND state != ''
+      ORDER BY state
+    `);
+    conn.release();
+    
+    res.json({ states: states.map(s => s.state) });
+  } catch (err) {
+    logger.error('location states: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/location/cities', async (req, res) => {
+  const { states } = req.query;
+  if (!states) return res.status(400).json({ error: 'states parameter required' });
+  
+  try {
+    const conn = await pool.getConnection();
+    const stateList = states.split(',');
+    const placeholders = stateList.map(() => '?').join(',');
+    
+    const [cities] = await conn.execute(`
+      SELECT DISTINCT city, state
+      FROM clientes_tray_ecommerce
+      WHERE state IN (${placeholders})
+        AND city IS NOT NULL 
+        AND city != ''
+      ORDER BY state, city
+    `, stateList);
+    conn.release();
+    
+    res.json({ cities });
+  } catch (err) {
+    logger.error('location cities: ' + err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Dashboard KPIs de Tráfego Pago ────────────────────────────
 app.get('/api/traffic/dashboard', async (req, res) => {
   const { startDate, endDate, platform = 'all', campaign } = req.query;
