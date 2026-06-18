@@ -435,10 +435,9 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
           <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
             <tr>
               <th>Cliente</th>
-              <th>CPF/CNPJ</th>
               <th>Email</th>
-              <th>Telefone</th>
               <th>Cidade/Estado</th>
+              <th>Nascimento</th>
               <th>Pedidos</th>
               <th>Qtd Total</th>
               <th>Total Gasto</th>
@@ -446,7 +445,7 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
             </tr>
           </thead>
           <tbody id="mpc-tbody">
-            <tr><td colspan="9"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+            <tr><td colspan="8"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -2206,17 +2205,20 @@ async function openProductCustomersModal(productId, productName) {
     document.getElementById('mpc-customer-count').textContent = `${result.customers.length} clientes encontrados`;
     
     if (result.customers.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--tm)">Nenhum cliente encontrado</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--tm)">Nenhum cliente encontrado</td></tr>';
       return;
     }
     
-    tbody.innerHTML = result.customers.map(c => `
+    tbody.innerHTML = result.customers.map(c => {
+      const birthDate = c.birth_date ? fmtD(c.birth_date) : '—';
+      const genderIcon = c.gender === 1 ? '👨' : c.gender === 2 ? '👩' : '👤';
+      
+      return `
       <tr>
-        <td><strong>${c.customer_name || 'Sem nome'}</strong></td>
-        <td style="font-family:monospace;font-size:.85rem">${c.cpf || c.cnpj || '—'}</td>
+        <td><strong>${genderIcon} ${c.customer_name || 'Sem nome'}</strong></td>
         <td style="font-size:.85rem">${c.email || '—'}</td>
-        <td style="font-size:.85rem">${c.telefone || '—'}</td>
         <td>${c.cidade || '—'}${c.estado ? ' / ' + c.estado : ''}</td>
+        <td style="text-align:center;font-size:.85rem">${birthDate}</td>
         <td style="text-align:center">${c.total_orders}</td>
         <td style="text-align:center">${c.total_quantity}</td>
         <td style="color:var(--ok);font-weight:700">${fmt(c.total_spent)}</td>
@@ -2227,9 +2229,10 @@ async function openProductCustomersModal(productId, productName) {
           </button>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
   }
 }
 

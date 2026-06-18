@@ -485,12 +485,11 @@ class TrafficService {
         SELECT DISTINCT
           c.id as customer_id,
           c.name as customer_name,
-          c.cpf,
-          c.cnpj,
           c.email,
-          c.phone as telefone,
           c.city as cidade,
           c.state as estado,
+          c.birth_date,
+          c.gender,
           COUNT(DISTINCT pvt.order_id) as total_orders,
           SUM(pvt.quantity) as total_quantity,
           ROUND(SUM(pvt.price * pvt.quantity), 2) as total_spent
@@ -499,7 +498,7 @@ class TrafficService {
         INNER JOIN clientes_tray_ecommerce c ON p.customer_id = c.id
         WHERE pvt.product_id = ?
           AND p.date BETWEEN ? AND ?
-        GROUP BY c.id, c.name, c.cpf, c.cnpj, c.email, c.phone, c.city, c.state
+        GROUP BY c.id, c.name, c.email, c.city, c.state, c.birth_date, c.gender
         ORDER BY total_spent DESC
       `;
       
