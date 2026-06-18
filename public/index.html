@@ -356,17 +356,18 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
             <tr>
               <th>Produto</th>
               <th>SKU</th>
+              <th>Cliques</th>
               <th>Marca</th>
               <th>Qtd Vendida</th>
               <th>Receita</th>
               <th>Investimento</th>
               <th>Lucro</th>
-              <th>ROAS</th>
               <th>Nº Campanhas</th>
+              <th>Link Campanha</th>
             </tr>
           </thead>
           <tbody id="t-products-tbody">
-            <tr><td colspan="9"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+            <tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -2008,7 +2009,7 @@ async function loadTrafficProducts() {
   if (!s || !e) return;
   
   const tbody = document.getElementById('t-products-tbody');
-  tbody.innerHTML = '<tr><td colspan="9"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
   
   try {
     const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
@@ -2018,27 +2019,51 @@ async function loadTrafficProducts() {
     document.getElementById('t-product-count').textContent = `${tData.products.length} produtos`;
     
     if (!tData.products.length) {
-      tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="icon">📦</div><p>Nenhum produto encontrado no período</p></div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">📦</div><p>Nenhum produto encontrado no período</p></div></td></tr>';
       return;
     }
     
-    tbody.innerHTML = tData.products.map(p => `
+    tbody.innerHTML = tData.products.map(p => {
+      // Criar dropdown de links das campanhas
+      let campaignLinksHtml = '—';
+      if (p.campaign_links && p.campaign_links.length > 0) {
+        campaignLinksHtml = '<select class="campaign-link-select" onchange="window.open(this.value, \'_blank\')" style="padding:4px 8px;border:1px solid var(--bdr);border-radius:4px;background:var(--bg);color:var(--ts);cursor:pointer">';
+        campaignLinksHtml += '<option value="">Ver Campanhas (' + p.campaign_links.length + ')</option>';
+        p.campaign_links.forEach(link => {
+          campaignLinksHtml += `<option value="${link.url}">${getPlatformIcon(link.platform)} ${link.campaign_name.substring(0, 40)}${link.campaign_name.length > 40 ? '...' : ''}</option>`;
+        });
+        campaignLinksHtml += '</select>';
+      }
+      
+      return `
       <tr>
         <td><strong>${p.product_name || 'Sem nome'}</strong></td>
         <td>${p.sku || '—'}</td>
+        <td style="text-align:center;font-weight:700">${fmtN(p.clicks || 0)}</td>
         <td>${p.brand || '—'}</td>
-        <td>${fmtN(p.quantity_sold)}</td>
-        <td>${fmt(p.revenue)}</td>
+        <td style="text-align:center">${fmtN(p.quantity_sold)}</td>
+        <td style="color:var(--ok);font-weight:700">${fmt(p.revenue)}</td>
         <td>${fmt(p.investment)}</td>
-        <td style="color:${p.profit >= 0 ? 'var(--ok)' : 'var(--err)'}">${fmt(p.profit)}</td>
-        <td><strong style="color:${p.roas >= 2 ? 'var(--ok)' : p.roas >= 1 ? 'var(--warn)' : 'var(--err)'}">${(p.roas || 0).toFixed(2)}x</strong></td>
-        <td>${p.campaigns_count || 0}</td>
+        <td style="color:${p.profit >= 0 ? 'var(--ok)' : 'var(--err)'}; font-weight:700">${fmt(p.profit)}</td>
+        <td style="text-align:center">${p.campaigns_count || 0}</td>
+        <td>${campaignLinksHtml}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
     
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
   }
+}
+
+function getPlatformIcon(platform) {
+  const icons = {
+    'Facebook': '📘',
+    'Google': '🔴',
+    'TikTok': '🎵',
+    'Instagram': '📷'
+  };
+  return icons[platform] || '📢';
 }
 
 async function loadTrafficRankings() {

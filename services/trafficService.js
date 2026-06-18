@@ -180,7 +180,7 @@ class TrafficService {
       
       const [products] = await conn.execute(query, params);
 
-      // Para cada produto, buscar investimento das campanhas
+      // Para cada produto, buscar investimento, cliques e links das campanhas
       const productsWithInvestment = [];
       
       for (const product of products) {
@@ -191,15 +191,21 @@ class TrafficService {
             cost: parseFloat(product.cost || 0),
             profit: parseFloat(product.profit || 0),
             investment: 0,
+            clicks: 0,
             roi: 0,
-            roas: 0
+            roas: 0,
+            campaign_links: []
           });
           continue;
         }
         
         const campaignIds = product.campaign_ids.split(',').filter(id => id && id.trim());
-        const investment = campaignIds.length > 0 ? 
-          await this.getCampaignInvestment(campaignIds, startDate, endDate) : 0;
+        const [investment, clicks, campaignLinks] = campaignIds.length > 0 ? 
+          await Promise.all([
+            this.getCampaignInvestment(campaignIds, startDate, endDate),
+            this.getCampaignClicks(campaignIds, startDate, endDate),
+            this.getCampaignLinks(campaignIds)
+          ]) : [0, 0, []];
         
         productsWithInvestment.push({
           ...product,
@@ -207,6 +213,8 @@ class TrafficService {
           cost: parseFloat(product.cost || 0),
           profit: parseFloat(product.profit || 0),
           investment,
+          clicks,
+          campaign_links: campaignLinks,
           roi: investment > 0 ? parseFloat(((product.revenue - investment) / investment * 100).toFixed(2)) : 0,
           roas: investment > 0 ? parseFloat((product.revenue / investment).toFixed(2)) : 0
         });
@@ -369,6 +377,127 @@ class TrafficService {
       }
 
       return parseFloat(total.toFixed(2));
+    } finally {
+      conn.release();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // HELPER: Buscar cliques totais de campanhas
+  // ──────────────────────────────────────────────────────────
+  async getCampaignClicks(campaignIds, startDate, endDate) {
+    if (!campaignIds || campaignIds.length === 0) return 0;
+    
+    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
+    if (validIds.length === 0) return 0;
+    
+    const conn = await this.pool.getConnection();
+    try {
+      const placeholders = validIds.map(() => '?').join(',');
+      
+      const queries = [
+        `SELECT COALESCE(SUM(clicks), 0) AS total FROM facebook_campanhas 
+         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`,
+        `SELECT COALESCE(SUM(metrics_clicks), 0) AS total FROM googleads_custom_report 
+         WHERE campaign_id IN (${placeholders}) AND segments_date BETWEEN ? AND ?`,
+        `SELECT COALESCE(SUM(clicks), 0) AS total FROM tiktokads_reports_campaign_report 
+         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`
+      ];
+
+      let total = 0;
+      for (const query of queries) {
+        try {
+          const [rows] = await conn.execute(query, [...validIds, startDate, endDate]);
+          total += parseInt(rows[0]?.total || 0);
+        } catch (err) {
+          console.error('Error in getCampaignClicks:', err.message);
+        }
+      }
+
+      return total;
+    } finally {
+      conn.release();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // HELPER: Buscar links das campanhas
+  // ──────────────────────────────────────────────────────────
+  async getCampaignLinks(campaignIds) {
+    if (!campaignIds || campaignIds.length === 0) return [];
+    
+    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
+    if (validIds.length === 0) return [];
+    
+    const conn = await this.pool.getConnection();
+    try {
+      const placeholders = validIds.map(() => '?').join(',');
+      const links = [];
+      
+      // Facebook - buscar campaign_id para construir URL
+      try {
+        const [fbRows] = await conn.execute(
+          `SELECT DISTINCT campaign_id, campaign_name 
+           FROM facebook_campanhas 
+           WHERE campaign_id IN (${placeholders})
+           LIMIT 10`,
+          validIds
+        );
+        fbRows.forEach(row => {
+          if (row.campaign_id) {
+            links.push({
+              platform: 'Facebook',
+              campaign_id: row.campaign_id,
+              campaign_name: row.campaign_name || 'Sem nome',
+              url: `https://business.facebook.com/adsmanager/manage/campaigns?act=&selected_campaign_ids=${row.campaign_id}`
+            });
+          }
+        });
+      } catch (err) {}
+      
+      // Google Ads
+      try {
+        const [googleRows] = await conn.execute(
+          `SELECT DISTINCT campaign_id, campaign_name 
+           FROM googleads_custom_report 
+           WHERE campaign_id IN (${placeholders})
+           LIMIT 10`,
+          validIds
+        );
+        googleRows.forEach(row => {
+          if (row.campaign_id) {
+            links.push({
+              platform: 'Google',
+              campaign_id: row.campaign_id,
+              campaign_name: row.campaign_name || 'Sem nome',
+              url: `https://ads.google.com/aw/campaigns?campaignId=${row.campaign_id}`
+            });
+          }
+        });
+      } catch (err) {}
+      
+      // TikTok
+      try {
+        const [tiktokRows] = await conn.execute(
+          `SELECT DISTINCT campaign_id, campaign_name 
+           FROM tiktokads_reports_campaign_report 
+           WHERE campaign_id IN (${placeholders})
+           LIMIT 10`,
+          validIds
+        );
+        tiktokRows.forEach(row => {
+          if (row.campaign_id) {
+            links.push({
+              platform: 'TikTok',
+              campaign_id: row.campaign_id,
+              campaign_name: row.campaign_name || 'Sem nome',
+              url: `https://ads.tiktok.com/i18n/campaign?aadvid=${row.campaign_id}`
+            });
+          }
+        });
+      } catch (err) {}
+
+      return links;
     } finally {
       conn.release();
     }
