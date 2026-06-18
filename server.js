@@ -781,27 +781,6 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-    
-    const vipLimit = Math.ceil(clients.length * 0.1);
-    const sorted   = [...clients].sort((a,b) => b.totalSpent - a.totalSpent);
-    const sd = new Date(startDate), ed = new Date(endDate);
-
-    let filtered = [];
-    if (type==='vip')        filtered = sorted.slice(0, vipLimit);
-    if (type==='recorrente') filtered = clients.filter(c => c.orderCount >= 3);
-    if (type==='novo')       filtered = clients.filter(c => {
-      const fp = c.firstDate ? new Date(c.firstDate) : null;
-      return fp && fp >= sd && fp <= ed;
-    });
-    if (type==='inativo')    filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 90);
-    if (type==='em_risco')   filtered = clients.filter(c => c.daysSince !== null && c.daysSince > 30 && c.daysSince <= 90);
-
-    res.json({ segment:type, customerCount:filtered.length, customers:filtered });
-  } catch (err) {
-    logger.error('segments/customers: ' + err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ── RFM ───────────────────────────────────────────────────────
 app.get('/api/rfm/distribution', async (req, res) => {
