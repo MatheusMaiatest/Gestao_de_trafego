@@ -3,8 +3,6 @@
 // Centraliza toda a lógica de negócio para análise de campanhas
 // ══════════════════════════════════════════════════════════════
 
-const logger = require('../utils/logger');
-
 class TrafficService {
   constructor(pool) {
     this.pool = pool;
@@ -68,7 +66,7 @@ class TrafficService {
             AVG((metrics_cost / NULLIF(metrics_impressions, 0)) * 1000) AS avg_cpm,
             AVG((metrics_clicks / NULLIF(metrics_impressions, 0)) * 100) AS avg_ctr
           FROM googleads_custom_report
-          WHERE date BETWEEN ? AND ?
+          WHERE segments_date BETWEEN ? AND ?
             ${campaign ? 'AND campaign_id = ?' : ''}
         `, campaign ? [startDate, endDate, campaign] : [startDate, endDate]);
         
@@ -98,7 +96,7 @@ class TrafficService {
             AVG(cost_per_1000_reached) AS avg_cpm,
             AVG((clicks / NULLIF(impressions, 0)) * 100) AS avg_ctr
           FROM tiktokads_reports_campaign_report
-          WHERE stat_time_day BETWEEN ? AND ?
+          WHERE metric_date BETWEEN ? AND ?
             ${campaign ? 'AND campaign_id = ?' : ''}
         `, campaign ? [startDate, endDate, campaign] : [startDate, endDate]);
         
@@ -145,8 +143,10 @@ class TrafficService {
     const conn = await this.pool.getConnection();
     
     try {
-      // Produtos vendidos com atribuição de campanha
-      const [products] = await conn.execute(`
+      const limitValue = parseInt(limit);
+      
+      // Construir query com parâmetros corretos
+      let query = `
         SELECT 
           pvt.product_id,
           pvt.name AS product_name,
@@ -163,29 +163,54 @@ class TrafficService {
         INNER JOIN pedidos_ecommerce_tray pet ON pvt.order_id = pet.id
         WHERE pet.date BETWEEN ? AND ?
           AND pvt.id_campaign IS NOT NULL
-          ${campaign ? 'AND pvt.id_campaign = ?' : ''}
+      `;
+      
+      const params = [startDate, endDate];
+      
+      if (campaign) {
+        query += ' AND pvt.id_campaign = ?';
+        params.push(campaign);
+      }
+      
+      query += `
         GROUP BY pvt.product_id, pvt.name, pvt.reference, pvt.brand
         ORDER BY revenue DESC
-        LIMIT ?
-      `, campaign ? [startDate, endDate, campaign, limit] : [startDate, endDate, limit]);
+        LIMIT ${limitValue}
+      `;
+      
+      const [products] = await conn.execute(query, params);
 
       // Para cada produto, buscar investimento das campanhas
-      const productsWithInvestment = await Promise.all(
-        products.map(async (product) => {
-          const campaignIds = product.campaign_ids.split(',');
-          const investment = await this.getCampaignInvestment(campaignIds, startDate, endDate);
-          
-          return {
+      const productsWithInvestment = [];
+      
+      for (const product of products) {
+        if (!product.campaign_ids) {
+          productsWithInvestment.push({
             ...product,
             revenue: parseFloat(product.revenue || 0),
             cost: parseFloat(product.cost || 0),
             profit: parseFloat(product.profit || 0),
-            investment,
-            roi: investment > 0 ? parseFloat(((product.revenue - investment) / investment * 100).toFixed(2)) : 0,
-            roas: investment > 0 ? parseFloat((product.revenue / investment).toFixed(2)) : 0
-          };
-        })
-      );
+            investment: 0,
+            roi: 0,
+            roas: 0
+          });
+          continue;
+        }
+        
+        const campaignIds = product.campaign_ids.split(',').filter(id => id && id.trim());
+        const investment = campaignIds.length > 0 ? 
+          await this.getCampaignInvestment(campaignIds, startDate, endDate) : 0;
+        
+        productsWithInvestment.push({
+          ...product,
+          revenue: parseFloat(product.revenue || 0),
+          cost: parseFloat(product.cost || 0),
+          profit: parseFloat(product.profit || 0),
+          investment,
+          roi: investment > 0 ? parseFloat(((product.revenue - investment) / investment * 100).toFixed(2)) : 0,
+          roas: investment > 0 ? parseFloat((product.revenue / investment).toFixed(2)) : 0
+        });
+      }
 
       return productsWithInvestment;
     } finally {
@@ -237,8 +262,8 @@ class TrafficService {
             'Google' AS platform,
             campaign_id,
             campaign_name,
-            MIN(date) AS start_date,
-            MAX(date) AS end_date,
+            MIN(segments_date) AS start_date,
+            MAX(segments_date) AS end_date,
             'Active' AS status,
             SUM(metrics_cost) AS investment,
             SUM(metrics_clicks) AS clicks,
@@ -250,7 +275,7 @@ class TrafficService {
             0 AS avg_cpm,
             AVG((metrics_clicks / NULLIF(metrics_impressions, 0)) * 100) AS avg_ctr
           FROM googleads_custom_report
-          WHERE date BETWEEN ? AND ?
+          WHERE segments_date BETWEEN ? AND ?
           GROUP BY campaign_id, campaign_name
           HAVING investment > 0
         `, [startDate, endDate]);
@@ -264,20 +289,20 @@ class TrafficService {
             'TikTok' AS platform,
             campaign_id,
             campaign_name,
-            MIN(stat_time_day) AS start_date,
-            MAX(stat_time_day) AS end_date,
+            MIN(metric_date) AS start_date,
+            MAX(metric_date) AS end_date,
             'Active' AS status,
             SUM(spend) AS investment,
             SUM(clicks) AS clicks,
             SUM(impressions) AS impressions,
             SUM(reach) AS reach,
             SUM(conversion) AS purchases,
-            SUM(conversion * cost_per_conversion) AS revenue,
+            SUM(total_purchase) AS revenue,
             AVG(cost_per_result) AS avg_cpc,
             AVG(cost_per_1000_reached) AS avg_cpm,
             AVG((clicks / NULLIF(impressions, 0)) * 100) AS avg_ctr
           FROM tiktokads_reports_campaign_report
-          WHERE stat_time_day BETWEEN ? AND ?
+          WHERE metric_date BETWEEN ? AND ?
           GROUP BY campaign_id, campaign_name
           HAVING investment > 0
         `, [startDate, endDate]);
@@ -312,26 +337,35 @@ class TrafficService {
   async getCampaignInvestment(campaignIds, startDate, endDate) {
     if (!campaignIds || campaignIds.length === 0) return 0;
     
+    // Filtrar IDs válidos
+    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
+    if (validIds.length === 0) return 0;
+    
     const conn = await this.pool.getConnection();
     try {
-      const placeholders = campaignIds.map(() => '?').join(',');
+      const placeholders = validIds.map(() => '?').join(',');
       
       const queries = [
         // Facebook
-        `SELECT SUM(spend) AS total FROM facebook_campanhas 
+        `SELECT COALESCE(SUM(spend), 0) AS total FROM facebook_campanhas 
          WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`,
         // Google
-        `SELECT SUM(metrics_cost) AS total FROM googleads_custom_report 
-         WHERE campaign_id IN (${placeholders}) AND date BETWEEN ? AND ?`,
+        `SELECT COALESCE(SUM(metrics_cost), 0) AS total FROM googleads_custom_report 
+         WHERE campaign_id IN (${placeholders}) AND segments_date BETWEEN ? AND ?`,
         // TikTok
-        `SELECT SUM(spend) AS total FROM tiktokads_reports_campaign_report 
-         WHERE campaign_id IN (${placeholders}) AND stat_time_day BETWEEN ? AND ?`
+        `SELECT COALESCE(SUM(spend), 0) AS total FROM tiktokads_reports_campaign_report 
+         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`
       ];
 
       let total = 0;
       for (const query of queries) {
-        const [rows] = await conn.execute(query, [...campaignIds, startDate, endDate]);
-        total += parseFloat(rows[0]?.total || 0);
+        try {
+          const [rows] = await conn.execute(query, [...validIds, startDate, endDate]);
+          total += parseFloat(rows[0]?.total || 0);
+        } catch (err) {
+          // Continuar se uma plataforma falhar
+          console.error('Error in getCampaignInvestment:', err.message);
+        }
       }
 
       return parseFloat(total.toFixed(2));
