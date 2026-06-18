@@ -363,11 +363,12 @@ tbody tr.both-row td{background:rgba(76,175,80,.05)}
               <th>Investimento</th>
               <th>Lucro</th>
               <th>Nº Campanhas</th>
+              <th>Plataforma</th>
               <th>Link Campanha</th>
             </tr>
           </thead>
           <tbody id="t-products-tbody">
-            <tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
+            <tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -2009,7 +2010,7 @@ async function loadTrafficProducts() {
   if (!s || !e) return;
   
   const tbody = document.getElementById('t-products-tbody');
-  tbody.innerHTML = '<tr><td colspan="10"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11"><div class="spin-wrap"><div class="spinner"></div></div></td></tr>';
   
   try {
     const q = `?startDate=${s}&endDate=${e}&platform=${tPlatform}`;
@@ -2019,20 +2020,26 @@ async function loadTrafficProducts() {
     document.getElementById('t-product-count').textContent = `${tData.products.length} produtos`;
     
     if (!tData.products.length) {
-      tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state"><div class="icon">📦</div><p>Nenhum produto encontrado no período</p></div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11"><div class="empty-state"><div class="icon">📦</div><p>Nenhum produto encontrado no período</p></div></td></tr>';
       return;
     }
     
     tbody.innerHTML = tData.products.map(p => {
-      // Criar dropdown de links das campanhas
-      let campaignLinksHtml = '—';
+      // Criar dropdown de links das plataformas
+      let platformLinksHtml = '—';
+      let platformsHtml = '—';
+      
       if (p.campaign_links && p.campaign_links.length > 0) {
-        campaignLinksHtml = '<select class="campaign-link-select" onchange="window.open(this.value, \'_blank\')" style="padding:4px 8px;border:1px solid var(--bdr);border-radius:4px;background:var(--bg);color:var(--ts);cursor:pointer">';
-        campaignLinksHtml += '<option value="">Ver Campanhas (' + p.campaign_links.length + ')</option>';
+        // Mostrar plataformas ativas
+        platformsHtml = p.platform_summary.map(plat => getPlatformIcon(plat)).join(' ');
+        
+        // Criar dropdown com links para gerenciadores
+        platformLinksHtml = '<select class="campaign-link-select" onchange="window.open(this.value, \'_blank\')" style="padding:4px 8px;border:1px solid var(--bdr);border-radius:4px;background:var(--bg);color:var(--ts);cursor:pointer">';
+        platformLinksHtml += '<option value="">Acessar Plataforma</option>';
         p.campaign_links.forEach(link => {
-          campaignLinksHtml += `<option value="${link.url}">${getPlatformIcon(link.platform)} ${link.campaign_name.substring(0, 40)}${link.campaign_name.length > 40 ? '...' : ''}</option>`;
+          platformLinksHtml += `<option value="${link.url}">${getPlatformIcon(link.platform)} ${link.label}</option>`;
         });
-        campaignLinksHtml += '</select>';
+        platformLinksHtml += '</select>';
       }
       
       return `
@@ -2046,13 +2053,14 @@ async function loadTrafficProducts() {
         <td>${fmt(p.investment)}</td>
         <td style="color:${p.profit >= 0 ? 'var(--ok)' : 'var(--err)'}; font-weight:700">${fmt(p.profit)}</td>
         <td style="text-align:center">${p.campaigns_count || 0}</td>
-        <td>${campaignLinksHtml}</td>
+        <td style="text-align:center;font-size:18px">${platformsHtml}</td>
+        <td>${platformLinksHtml}</td>
       </tr>
     `;
     }).join('');
     
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="color:var(--err);padding:20px;text-align:center">❌ ${err.message}</td></tr>`;
   }
 }
 

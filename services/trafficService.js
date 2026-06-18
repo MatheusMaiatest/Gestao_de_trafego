@@ -145,7 +145,7 @@ class TrafficService {
     try {
       const limitValue = parseInt(limit);
       
-      // Query otimizada para reduzir uso de temp files
+      // Query otimizada - produtos vendidos no período
       let query = `
         SELECT 
           pvt.product_id,
@@ -156,22 +156,13 @@ class TrafficService {
           SUM(pvt.quantity) AS quantity_sold,
           SUM(pvt.price * pvt.quantity) AS revenue,
           SUM(COALESCE(pvt.cost_price, 0) * pvt.quantity) AS cost,
-          SUM((pvt.price - COALESCE(pvt.cost_price, 0)) * pvt.quantity) AS profit,
-          COUNT(DISTINCT pvt.id_campaign) AS campaigns_count,
-          GROUP_CONCAT(DISTINCT pvt.id_campaign SEPARATOR ',') AS campaign_ids
+          SUM((pvt.price - COALESCE(pvt.cost_price, 0)) * pvt.quantity) AS profit
         FROM produtos_vendidos_tray_ecommerce pvt
         INNER JOIN pedidos_ecommerce_tray pet ON pvt.order_id = pet.id
         WHERE pet.date BETWEEN ? AND ?
-          AND pvt.id_campaign IS NOT NULL
-          AND pvt.id_campaign != ''
       `;
       
       const params = [startDate, endDate];
-      
-      if (campaign) {
-        query += ' AND pvt.id_campaign = ?';
-        params.push(campaign);
-      }
       
       query += `
         GROUP BY pvt.product_id, pvt.name, pvt.reference, pvt.brand
@@ -181,68 +172,158 @@ class TrafficService {
       
       const [products] = await conn.execute(query, params);
 
-      // Processar produtos de forma mais eficiente
-      const productsWithData = [];
-      
-      for (const product of products) {
-        if (!product.campaign_ids) {
-          productsWithData.push({
-            ...product,
-            revenue: parseFloat(product.revenue || 0),
-            cost: parseFloat(product.cost || 0),
-            profit: parseFloat(product.profit || 0),
-            investment: 0,
-            clicks: 0,
-            roi: 0,
-            roas: 0,
-            campaign_links: []
-          });
-          continue;
-        }
-        
-        // Limitar a 10 campanhas por produto para evitar queries muito grandes
-        const campaignIds = product.campaign_ids.split(',')
-          .filter(id => id && id.trim())
-          .slice(0, 10);
-        
-        if (campaignIds.length === 0) {
-          productsWithData.push({
-            ...product,
-            revenue: parseFloat(product.revenue || 0),
-            cost: parseFloat(product.cost || 0),
-            profit: parseFloat(product.profit || 0),
-            investment: 0,
-            clicks: 0,
-            roi: 0,
-            roas: 0,
-            campaign_links: []
-          });
-          continue;
-        }
-        
-        // Buscar dados das campanhas de forma otimizada
-        const [investment, clicks, campaignLinks] = await Promise.all([
-          this.getCampaignInvestment(campaignIds, startDate, endDate),
-          this.getCampaignClicks(campaignIds, startDate, endDate),
-          this.getCampaignLinks(campaignIds)
-        ]);
-        
+      // Buscar métricas agregadas por plataforma no período
+      const [platformMetrics] = await Promise.all([
+        this.getPlatformMetrics(startDate, endDate, platform)
+      ]);
+
+      // Processar produtos com métricas agregadas
+      const productsWithData = products.map(product => {
         const revenue = parseFloat(product.revenue || 0);
+        const cost = parseFloat(product.cost || 0);
+        const profit = parseFloat(product.profit || 0);
         
-        productsWithData.push({
+        // Estimar investimento proporcional baseado na receita
+        const totalRevenue = platformMetrics.totalRevenue || 1;
+        const productShare = revenue / totalRevenue;
+        const estimatedInvestment = platformMetrics.totalInvestment * productShare;
+        const estimatedClicks = Math.round(platformMetrics.totalClicks * productShare);
+        
+        return {
           ...product,
           revenue,
-          cost: parseFloat(product.cost || 0),
-          profit: parseFloat(product.profit || 0),
-          investment,
-          clicks,
-          campaign_links: campaignLinks,
-          roi: investment > 0 ? parseFloat(((revenue - investment) / investment * 100).toFixed(2)) : 0,
-          roas: investment > 0 ? parseFloat((revenue / investment).toFixed(2)) : 0
-        });
-      }
+          cost,
+          profit,
+          investment: parseFloat(estimatedInvestment.toFixed(2)),
+          clicks: estimatedClicks,
+          platform_summary: platformMetrics.platforms,
+          campaigns_count: platformMetrics.totalCampaigns,
+          campaign_links: platformMetrics.platformLinks,
+          roi: estimatedInvestment > 0 ? parseFloat(((revenue - estimatedInvestment) / estimatedInvestment * 100).toFixed(2)) : 0,
+          roas: estimatedInvestment > 0 ? parseFloat((revenue / estimatedInvestment).toFixed(2)) : 0
+        };
+      });
 
       return productsWithData;
+    } finally {
+      conn.release();
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // HELPER: Buscar métricas agregadas por plataforma
+  // ──────────────────────────────────────────────────────────
+  async getPlatformMetrics(startDate, endDate, platform = 'all') {
+    const conn = await this.pool.getConnection();
+    try {
+      let totalInvestment = 0;
+      let totalClicks = 0;
+      let totalRevenue = 0;
+      let totalCampaigns = 0;
+      const platforms = [];
+      const platformLinks = [];
+
+      // Facebook
+      if (platform === 'all' || platform === 'facebook') {
+        try {
+          const [fbData] = await conn.execute(`
+            SELECT 
+              COUNT(DISTINCT campaign_id) as campaigns,
+              SUM(spend) as investment,
+              SUM(clicks) as clicks,
+              SUM(value_offsite_conversion_fb_pixel_purchase) as revenue
+            FROM facebook_campanhas
+            WHERE metric_date BETWEEN ? AND ?
+          `, [startDate, endDate]);
+          
+          if (fbData[0]) {
+            const fb = fbData[0];
+            totalInvestment += parseFloat(fb.investment || 0);
+            totalClicks += parseInt(fb.clicks || 0);
+            totalRevenue += parseFloat(fb.revenue || 0);
+            totalCampaigns += parseInt(fb.campaigns || 0);
+            platforms.push('Facebook');
+            platformLinks.push({
+              platform: 'Facebook',
+              url: 'https://business.facebook.com/adsmanager',
+              label: 'Gerenciador de Anúncios Facebook'
+            });
+          }
+        } catch (err) {
+          console.error('Error fetching Facebook metrics:', err.message);
+        }
+      }
+
+      // Google
+      if (platform === 'all' || platform === 'google') {
+        try {
+          const [googleData] = await conn.execute(`
+            SELECT 
+              COUNT(DISTINCT campaign_id) as campaigns,
+              SUM(metrics_cost) as investment,
+              SUM(metrics_clicks) as clicks,
+              SUM(metrics_conversionsvalue) as revenue
+            FROM googleads_custom_report
+            WHERE segments_date BETWEEN ? AND ?
+          `, [startDate, endDate]);
+          
+          if (googleData[0]) {
+            const google = googleData[0];
+            totalInvestment += parseFloat(google.investment || 0);
+            totalClicks += parseInt(google.clicks || 0);
+            totalRevenue += parseFloat(google.revenue || 0);
+            totalCampaigns += parseInt(google.campaigns || 0);
+            platforms.push('Google');
+            platformLinks.push({
+              platform: 'Google',
+              url: 'https://ads.google.com',
+              label: 'Google Ads'
+            });
+          }
+        } catch (err) {
+          console.error('Error fetching Google metrics:', err.message);
+        }
+      }
+
+      // TikTok
+      if (platform === 'all' || platform === 'tiktok') {
+        try {
+          const [tiktokData] = await conn.execute(`
+            SELECT 
+              COUNT(DISTINCT campaign_id) as campaigns,
+              SUM(spend) as investment,
+              SUM(clicks) as clicks,
+              SUM(total_purchase) as revenue
+            FROM tiktokads_reports_campaign_report
+            WHERE metric_date BETWEEN ? AND ?
+          `, [startDate, endDate]);
+          
+          if (tiktokData[0]) {
+            const tiktok = tiktokData[0];
+            totalInvestment += parseFloat(tiktok.investment || 0);
+            totalClicks += parseInt(tiktok.clicks || 0);
+            totalRevenue += parseFloat(tiktok.revenue || 0);
+            totalCampaigns += parseInt(tiktok.campaigns || 0);
+            platforms.push('TikTok');
+            platformLinks.push({
+              platform: 'TikTok',
+              url: 'https://ads.tiktok.com',
+              label: 'TikTok Ads Manager'
+            });
+          }
+        } catch (err) {
+          console.error('Error fetching TikTok metrics:', err.message);
+        }
+      }
+
+      return {
+        totalInvestment,
+        totalClicks,
+        totalRevenue,
+        totalCampaigns,
+        platforms,
+        platformLinks
+      };
     } finally {
       conn.release();
     }
@@ -356,185 +437,6 @@ class TrafficService {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, limit);
 
-    } finally {
-      conn.release();
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────
-  // HELPER: Buscar investimento total de campanhas
-  // ──────────────────────────────────────────────────────────
-  async getCampaignInvestment(campaignIds, startDate, endDate) {
-    if (!campaignIds || campaignIds.length === 0) return 0;
-    
-    // Filtrar IDs válidos
-    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
-    if (validIds.length === 0) return 0;
-    
-    const conn = await this.pool.getConnection();
-    try {
-      const placeholders = validIds.map(() => '?').join(',');
-      
-      const queries = [
-        // Facebook
-        `SELECT COALESCE(SUM(spend), 0) AS total FROM facebook_campanhas 
-         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`,
-        // Google
-        `SELECT COALESCE(SUM(metrics_cost), 0) AS total FROM googleads_custom_report 
-         WHERE campaign_id IN (${placeholders}) AND segments_date BETWEEN ? AND ?`,
-        // TikTok
-        `SELECT COALESCE(SUM(spend), 0) AS total FROM tiktokads_reports_campaign_report 
-         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`
-      ];
-
-      let total = 0;
-      for (const query of queries) {
-        try {
-          const [rows] = await conn.execute(query, [...validIds, startDate, endDate]);
-          total += parseFloat(rows[0]?.total || 0);
-        } catch (err) {
-          // Continuar se uma plataforma falhar
-          console.error('Error in getCampaignInvestment:', err.message);
-        }
-      }
-
-      return parseFloat(total.toFixed(2));
-    } finally {
-      conn.release();
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────
-  // HELPER: Buscar cliques totais de campanhas
-  // ──────────────────────────────────────────────────────────
-  async getCampaignClicks(campaignIds, startDate, endDate) {
-    if (!campaignIds || campaignIds.length === 0) return 0;
-    
-    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
-    if (validIds.length === 0) return 0;
-    
-    const conn = await this.pool.getConnection();
-    try {
-      const placeholders = validIds.map(() => '?').join(',');
-      
-      const queries = [
-        `SELECT COALESCE(SUM(clicks), 0) AS total FROM facebook_campanhas 
-         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`,
-        `SELECT COALESCE(SUM(metrics_clicks), 0) AS total FROM googleads_custom_report 
-         WHERE campaign_id IN (${placeholders}) AND segments_date BETWEEN ? AND ?`,
-        `SELECT COALESCE(SUM(clicks), 0) AS total FROM tiktokads_reports_campaign_report 
-         WHERE campaign_id IN (${placeholders}) AND metric_date BETWEEN ? AND ?`
-      ];
-
-      let total = 0;
-      for (const query of queries) {
-        try {
-          const [rows] = await conn.execute(query, [...validIds, startDate, endDate]);
-          total += parseInt(rows[0]?.total || 0);
-        } catch (err) {
-          console.error('Error in getCampaignClicks:', err.message);
-        }
-      }
-
-      return total;
-    } finally {
-      conn.release();
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────
-  // HELPER: Buscar links das campanhas (otimizado)
-  // ──────────────────────────────────────────────────────────
-  async getCampaignLinks(campaignIds) {
-    if (!campaignIds || campaignIds.length === 0) return [];
-    
-    const validIds = campaignIds.filter(id => id != null && id !== '' && id !== 'null');
-    if (validIds.length === 0) return [];
-    
-    // Limitar a 5 campanhas para evitar queries muito pesadas
-    const limitedIds = validIds.slice(0, 5);
-    
-    const conn = await this.pool.getConnection();
-    try {
-      const placeholders = limitedIds.map(() => '?').join(',');
-      const links = [];
-      
-      // Facebook - buscar apenas dados essenciais
-      try {
-        const [fbRows] = await conn.execute(
-          `SELECT campaign_id, 
-                  SUBSTRING(campaign_name, 1, 50) as campaign_name 
-           FROM facebook_campanhas 
-           WHERE campaign_id IN (${placeholders})
-           GROUP BY campaign_id, campaign_name
-           LIMIT 5`,
-          limitedIds
-        );
-        fbRows.forEach(row => {
-          if (row.campaign_id) {
-            links.push({
-              platform: 'Facebook',
-              campaign_id: row.campaign_id,
-              campaign_name: row.campaign_name || 'Sem nome',
-              url: `https://business.facebook.com/adsmanager/manage/campaigns?act=&selected_campaign_ids=${row.campaign_id}`
-            });
-          }
-        });
-      } catch (err) {
-        console.error('Error fetching Facebook links:', err.message);
-      }
-      
-      // Google Ads
-      try {
-        const [googleRows] = await conn.execute(
-          `SELECT campaign_id,
-                  SUBSTRING(campaign_name, 1, 50) as campaign_name  
-           FROM googleads_custom_report 
-           WHERE campaign_id IN (${placeholders})
-           GROUP BY campaign_id, campaign_name
-           LIMIT 5`,
-          limitedIds
-        );
-        googleRows.forEach(row => {
-          if (row.campaign_id) {
-            links.push({
-              platform: 'Google',
-              campaign_id: row.campaign_id,
-              campaign_name: row.campaign_name || 'Sem nome',
-              url: `https://ads.google.com/aw/campaigns?campaignId=${row.campaign_id}`
-            });
-          }
-        });
-      } catch (err) {
-        console.error('Error fetching Google links:', err.message);
-      }
-      
-      // TikTok
-      try {
-        const [tiktokRows] = await conn.execute(
-          `SELECT campaign_id,
-                  SUBSTRING(campaign_name, 1, 50) as campaign_name 
-           FROM tiktokads_reports_campaign_report 
-           WHERE campaign_id IN (${placeholders})
-           GROUP BY campaign_id, campaign_name
-           LIMIT 5`,
-          limitedIds
-        );
-        tiktokRows.forEach(row => {
-          if (row.campaign_id) {
-            links.push({
-              platform: 'TikTok',
-              campaign_id: row.campaign_id,
-              campaign_name: row.campaign_name || 'Sem nome',
-              url: `https://ads.tiktok.com/i18n/campaign?aadvid=${row.campaign_id}`
-            });
-          }
-        });
-      } catch (err) {
-        console.error('Error fetching TikTok links:', err.message);
-      }
-
-      return links.slice(0, 10); // Máximo 10 links por produto
     } finally {
       conn.release();
     }
