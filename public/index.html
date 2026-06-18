@@ -753,12 +753,16 @@ function getHeatColorEx(value, min, max, dark) {
 }
 
 // Versão com escala logarítmica — comprime outliers e expande valores baixos
-function getHeatColorByRank(value, sortedValues, dark) {
+function getHeatColorByRank(value, sortedValues, dark, debugPrefix) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (!sortedValues || sortedValues.length === 0) return dark ? '#2a2f45' : '#dde3ee';
   
   // Usar escala logarítmica para lidar com outliers extremos
+  var min = sortedValues[0];
   var max = sortedValues[sortedValues.length - 1];
+  var q25 = sortedValues[Math.floor(sortedValues.length * 0.25)];
+  var median = sortedValues[Math.floor(sortedValues.length * 0.5)];
+  var q75 = sortedValues[Math.floor(sortedValues.length * 0.75)];
   
   // log(1 + valor) comprime extremos e expande valores baixos/médios
   var logVal = Math.log(1 + value);
@@ -794,7 +798,30 @@ function getHeatColorByRank(value, sortedValues, dark) {
   var r1=parseInt(c1.substr(1,2),16),g1=parseInt(c1.substr(3,2),16),b1=parseInt(c1.substr(5,2),16);
   var r2=parseInt(c2.substr(1,2),16),g2=parseInt(c2.substr(3,2),16),b2=parseInt(c2.substr(5,2),16);
   var r=Math.round(r1+(r2-r1)*f),g=Math.round(g1+(g2-g1)*f),b=Math.round(b1+(b2-b1)*f);
-  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  var finalColor = '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  
+  // LOG DETALHADO para análise
+  if (debugPrefix && (value === max || value === min || value === median || Math.random() < 0.02)) {
+    console.log('[COLOR DEBUG ' + debugPrefix + ']', {
+      valor: value.toFixed(2),
+      min: min.toFixed(2),
+      q25: q25.toFixed(2),
+      median: median.toFixed(2),
+      q75: q75.toFixed(2),
+      max: max.toFixed(2),
+      logVal: logVal.toFixed(4),
+      logMax: logMax.toFixed(4),
+      t: t.toFixed(4),
+      stopIndex: i,
+      stopRange: '[' + t0 + ' - ' + t1 + ']',
+      c1: c1,
+      c2: c2,
+      finalColor: finalColor,
+      percentualDoMax: ((value/max)*100).toFixed(2) + '%'
+    });
+  }
+  
+  return finalColor;
 }
 
 function renderLegendaEx(elementId, valores, dark, formatFn) {
@@ -905,9 +932,10 @@ function renderMapNF(states){
   var sortedNF = valores.slice().sort(function(a,b){return a-b;});
   var minNF = sortedNF[0] || 0;
   var maxNF = sortedNF[sortedNF.length - 1] || 1;
+  console.log('[MAP NF] Total valores:', valores.length, '| Min:', minNF, '| Max:', maxNF);
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-    return getHeatColorEx(value, minNF, maxNF, dark);
+    return getHeatColorByRank(value, sortedNF, dark, 'ESTADO-CLIENTES');
   };
 
   var W=460,H=400;
@@ -957,9 +985,10 @@ function renderMapFat(states){
   var sortedFat = valores.slice().sort(function(a,b){return a-b;});
   var minFat = sortedFat[0] || 0;
   var maxFat = sortedFat[sortedFat.length - 1] || 1;
+  console.log('[MAP FAT] Total valores:', valores.length, '| Min:', minFat, '| Max:', maxFat);
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-    return getHeatColorEx(value, minFat, maxFat, dark);
+    return getHeatColorByRank(value, sortedFat, dark, 'ESTADO-FATURAMENTO');
   };
 
   var W=460,H=400;
@@ -1106,13 +1135,14 @@ function renderDrillMap(geo, uf, stateName, mode) {
       var sortedVals = valores.slice().sort(function(a,b){return a-b;});
       var minVal = sortedVals[0] || 0;
       var maxVal = sortedVals[sortedVals.length - 1] || 1;
+      console.log('[DRILL '+mode.toUpperCase()+' '+uf+'] Total valores:', valores.length, '| Min:', minVal, '| Max:', maxVal);
 
       var formatFn = useVal ? function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); } : null;
       renderLegendaEx('drill-legend-'+mode, valores, dark, formatFn);
 
       var getColor = function(value) {
         if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-        return getHeatColorEx(value, minVal, maxVal, dark);
+        return getHeatColorByRank(value, sortedVals, dark, 'DRILL-'+mode.toUpperCase()+'-'+uf);
       };
 
       var svgEl = document.getElementById(svgDrillId);
