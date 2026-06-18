@@ -824,7 +824,7 @@ function renderLegendaEx(elementId, valores, dark, formatFn) {
   // Renderizar legenda com as cores correspondentes aos valores reais
   var html = faixas.map(function(f, idx) {
     var midValue = (f.lo + f.hi) / 2;
-    var cor = getHeatColorByRank(midValue, sorted, dark);
+    var cor = getHeatColorEx(midValue, min, max, dark);
     var label = formatFn ? formatFn(f.lo) + ' - ' + formatFn(f.hi) : Math.round(f.lo) + ' - ' + Math.round(f.hi);
     return '<div class="legend-item" style="pointer-events:none;padding:3px 8px">' +
       '<span class="legend-dot" style="background:' + cor + '"></span>' +
@@ -902,9 +902,11 @@ function renderMapNF(states){
   renderLegendaEx('leg-nf', valores, dark, null);
 
   var sortedNF = valores.slice().sort(function(a,b){return a-b;});
+  var minNF = sortedNF[0] || 0;
+  var maxNF = sortedNF[sortedNF.length - 1] || 1;
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-    return getHeatColorByRank(value, sortedNF, dark);
+    return getHeatColorEx(value, minNF, maxNF, dark);
   };
 
   var W=460,H=400;
@@ -952,9 +954,11 @@ function renderMapFat(states){
   renderLegendaEx('leg-fat', valores, dark, function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); });
 
   var sortedFat = valores.slice().sort(function(a,b){return a-b;});
+  var minFat = sortedFat[0] || 0;
+  var maxFat = sortedFat[sortedFat.length - 1] || 1;
   var getColor = function(value) {
     if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-    return getHeatColorByRank(value, sortedFat, dark);
+    return getHeatColorEx(value, minFat, maxFat, dark);
   };
 
   var W=460,H=400;
@@ -1082,15 +1086,17 @@ function renderDrillMap(geo, uf, stateName, mode) {
 
       var useVal = mode==='faturamento';
       var valores = cities.map(function(c){ return useVal?c.totalRevenue:c.customerCount; }).filter(function(v){ return v>0; });
-      // Array ordenado para escala por rank — distribui cores uniformemente ignorando outliers
+      // Array ordenado para escala por magnitude real dos valores
       var sortedVals = valores.slice().sort(function(a,b){return a-b;});
+      var minVal = sortedVals[0] || 0;
+      var maxVal = sortedVals[sortedVals.length - 1] || 1;
 
       var formatFn = useVal ? function(v){ return 'R$'+(v>=1000?(v/1000).toFixed(0)+'k':v.toFixed(0)); } : null;
       renderLegendaEx('drill-legend-'+mode, valores, dark, formatFn);
 
       var getColor = function(value) {
         if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
-        return getHeatColorByRank(value, sortedVals, dark);
+        return getHeatColorEx(value, minVal, maxVal, dark);
       };
 
       var svgEl = document.getElementById(svgDrillId);
