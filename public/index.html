@@ -712,14 +712,14 @@ function getHeatColorEx(value, min, max, dark) {
   if (!value || value === 0) return dark ? '#2a2f45' : '#dde3ee';
   if (max <= 0) return '#8b0000';
 
-  // Escala: raiz quadrada a partir do ZERO (não do mínimo).
-  // Isso garante que o maior valor sempre fica vermelho escuro,
-  // e os valores menores ficam proporcionalmente mais verdes —
-  // independentemente de qual é o mínimo da amostra.
-  // Ex: Feira R$2,09M → t=1.0 (vermelho escuro)
-  //     Salvador R$473k → t=sqrt(473k/2094k)=0.476 (laranja)
-  //     Cidade R$9k → t=sqrt(9k/2094k)=0.065 (verde)
-  var t = Math.sqrt(value / max);
+  // Escala LOG a partir do zero: log(1+valor) / log(1+máximo)
+  // Ideal para dados com outliers extremos (ex: Feira R$2M vs cidades R$100-R$500)
+  // - Feira R$2,09M  → t = log(2094739)/log(2094739) = 1.00 → VERMELHO ESCURO
+  // - Salvador R$473k → t = log(473468)/log(2094739) = 0.89 → VERMELHO
+  // - Simões Filho R$34k → t = log(34730)/log(2094739) = 0.70 → LARANJA
+  // - Cidade R$500   → t = log(501)/log(2094739)   = 0.40 → AMARELO
+  // - Cidade R$50    → t = log(51)/log(2094739)    = 0.25 → VERDE CLARO
+  var t = Math.log(1 + value) / Math.log(1 + max);
   t = Math.max(0, Math.min(1, t));
 
   // 14 nuances: verde → amarelo → laranja → vermelho → bordô
