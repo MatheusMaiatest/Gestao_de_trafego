@@ -744,8 +744,12 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     if (cities && cities.length > 0) {
       const cityList = cities.split(',').map(c => {
         const [city, state] = c.split('|');
-        // Remover parênteses se existirem
-        const cleanCity = city.trim().replace(/^\(|\)$/g, '').toUpperCase();
+        // Limpeza agressiva: remove parênteses, "Bahia", "ba" e espaços extras
+        const cleanCity = city.trim()
+          .replace(/^\(|\)$/g, '')  // Remove parênteses do início/fim
+          .replace(/\s+(ba|bahia|BA|Bahia)\s*$/gi, '')  // Remove "ba" ou "Bahia" do final
+          .trim()
+          .toUpperCase();
         const cleanState = state.trim().toUpperCase();
         return { city: cleanCity, state: cleanState };
       });
@@ -755,15 +759,21 @@ app.get('/api/segments/:type/customers', async (req, res) => {
       
       const before = clients.length;
       clients = clients.filter(c => {
-        const clientCity = (c.city || '').trim().toUpperCase();
+        // Aplicar mesma limpeza nos dados do cliente
+        const clientCity = (c.city || '').trim()
+          .replace(/^\(|\)$/g, '')
+          .replace(/\s+(ba|bahia|BA|Bahia)\s*$/gi, '')
+          .trim()
+          .toUpperCase();
         const clientState = (c.state || '').trim().toUpperCase();
+        
         const match = cityList.some(filter => 
           filter.city === clientCity && filter.state === clientState
         );
         
         // Log primeiros 5 não-matches para debug
         if (!match && before - clients.length < 5) {
-          logger.info(`  NO MATCH: client "${c.name}": city="${clientCity}" state="${clientState}"`);
+          logger.info(`  NO MATCH: client "${c.name}": city="${clientCity}" (original: "${c.city}") state="${clientState}"`);
         }
         
         return match;
