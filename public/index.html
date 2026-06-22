@@ -1962,6 +1962,14 @@ async function onStateChange() {
     const result = await api(`/location/cities?states=${selectedStates.join(',')}`);
     const cities = result.cities || [];
     
+    console.log('🏙️ Cities received from API:', cities.length, 'cities');
+    if (cities.length > 0) {
+      console.log('🔍 First 3 cities from API:');
+      cities.slice(0, 3).forEach((c, i) => {
+        console.log(`  ${i+1}. city="${c.city}" (length: ${c.city?.length}), state="${c.state}"`);
+      });
+    }
+    
     if (cities.length === 0) {
       document.getElementById('dm-cities-list').innerHTML = '<div style="text-align:center;padding:12px;color:var(--tm);font-size:.75rem">Nenhuma cidade encontrada</div>';
       return;
@@ -2004,9 +2012,11 @@ function getLocationFilters() {
     state: cb.dataset.state
   }));
   
-  console.log('🔍 getLocationFilters - Raw values:', {
-    states: selectedStates,
-    cities: selectedCities.map(c => `"${c.city}" | "${c.state}"`)
+  console.log('🔍 getLocationFilters - Raw values:');
+  console.log('  States:', selectedStates);
+  console.log('  Cities (full objects):', selectedCities);
+  selectedCities.forEach((c, i) => {
+    console.log(`    City ${i+1}: value="${c.city}" (length: ${c.city.length}), state="${c.state}"`);
   });
   
   return { states: selectedStates, cities: selectedCities };

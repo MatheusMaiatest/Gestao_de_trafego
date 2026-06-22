@@ -744,7 +744,10 @@ app.get('/api/segments/:type/customers', async (req, res) => {
     if (cities && cities.length > 0) {
       const cityList = cities.split(',').map(c => {
         const [city, state] = c.split('|');
-        return { city: city.trim().toUpperCase(), state: state.trim().toUpperCase() };
+        // Remover parênteses se existirem
+        const cleanCity = city.trim().replace(/^\(|\)$/g, '').toUpperCase();
+        const cleanState = state.trim().toUpperCase();
+        return { city: cleanCity, state: cleanState };
       });
       
       logger.info(`Filtering by ${cityList.length} cities:`);
